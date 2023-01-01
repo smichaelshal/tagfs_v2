@@ -1,0 +1,54 @@
+
+// ################################### tmp walk searching (error) #################################################
+
+d_root_tag = kern_path("/.tag/red");
+search_tag(d_root_tag);
+
+int search_tag(struct dentry *d_root_tag){
+	struct dentry *child;
+	struct dentry *d_this = lookup_one(d_root_tag, "this");
+	struct dentry *d_contain = lookup_one(d_root_tag, "contain");
+	
+	spin_lock(&d_this->d_lock);
+	list_for_each_entry(child, &d_root_tag->d_subdirs, d_this) {
+		add_tag(child);
+	}
+	spin_unlock(&d_this->d_lock);
+
+	spin_lock(&d_contain->d_lock);
+	list_for_each_entry(child, &d_contain->d_subdirs, d_child) {
+		search_tag(child);
+	}
+	spin_unlock(&d_contain->d_lock);
+}
+
+// ####################################################################################
+
+
+base_name = "/.tag"
+tag_name = "red"
+
+search_tag(base_name, tag_name)
+
+int search_tag(char *base_name, char *tag_name){
+	d_root_tag = kern_path(base_name + tag_name);
+	
+	struct dentry *d_this = lookup_one(d_root_tag, "this");
+	struct dentry *d_contain = lookup_one(d_root_tag, "contain");
+
+	spin_lock(&d_this->d_lock);
+	list_for_each_entry(child, &d_root_tag->d_subdirs, d_this) {
+		add_tag(child);
+	}
+	spin_unlock(&d_this->d_lock);
+
+	spin_lock(&d_contain->d_lock);
+	list_for_each_entry(child, &d_contain->d_subdirs, d_child) {
+		search_tag("../../.." + child.name, tag_name);
+	}
+	spin_unlock(&d_contain->d_lock);
+
+}
+
+
+// ####################################################################################
