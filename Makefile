@@ -13,12 +13,15 @@ vtagfs-y += layout/hardlinking/hardlinking.o
 
 vtagfs-y += api/device_api.o
 
+vtagfs-y += hooks/hooks.o
+
 ccflags-y := -I$(src)
 ccflags-y := -I$(src)/include/ramfs
 ccflags-y := -I$(src)/publisher
 ccflags-y := -I$(src)/layout
 ccflags-y := -I$(src)/layout/hardlinking
 ccflags-y := -I$(src)/api
+ccflags-y := -I$(src)/hooks
 
 else
 # normal makefile
@@ -30,6 +33,7 @@ SUBDIRS += layout
 SUBDIRS += publisher
 SUBDIRS += user
 SUBDIRS += api
+SUBDIRS += hooks
 
 .PHONY: all clean
 default: mod

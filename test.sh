@@ -8,12 +8,22 @@ mkdir -p $MOUNT_PATH
 insmod $MODULE_NAME.ko
 mount -t $MODULE_NAME none $MOUNT_PATH
 
+dmesg -wH
+
+export PS1='> '
+ls -la red
+
+umount $MOUNT_PATH
+rmmod $MODULE_NAME
+
+
+
+
 ./user/user_query
 
 dmesg | tail -20 | less
 
-umount $MOUNT_PATH
-rmmod $MODULE_NAME
+
 
 ls -lai $MOUNT_PATH/red
 
@@ -97,7 +107,7 @@ echo 3 > /proc/sys/vm/drop_caches
 ls -lai /.tag_u13/red/contain_u13/home/contain_u13/john/contain_u13/tes1/this_u13/kk1
 
 cd ..
-zip -r tagfs_err39.zip tagfs
+zip -r tagfs_err40.zip tagfs
 python3 -m http.server
 rm -rf tagfs_*.zip
 cd tagfs

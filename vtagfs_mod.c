@@ -17,11 +17,13 @@ int vtagfs_init(void)
 	}
 
 	vtag_dev_init();
+	start_hooks();
 	return 0;
 }
 
 static void vtagfs_exit(void)
 {
+	close_hooks();
 	unregister_filesystem(&vtag_fs_type);
 	vtag_dev_exit();
 }

@@ -170,7 +170,6 @@ static int ramfs_tmpfile(struct user_namespace *mnt_userns,
 	if (!inode)
 		return -ENOSPC;
 	d_tmpfile(dentry, inode);
-	int a11 = send_request_tag("aaa");
 
 	return 0;
 }
@@ -323,7 +322,3 @@ struct file_system_type vtag_fs_type = {
 	.kill_sb	= ramfs_kill_sb,
 	.fs_flags	= FS_USERNS_MOUNT,
 };
-
-
-// int a1123;
-// a1123 = send_request_tag("aaa");

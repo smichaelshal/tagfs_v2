@@ -221,30 +221,3 @@ struct dentry *lookup_wrapper(struct inode *dir, struct dentry *dentry, unsigned
 struct dentry *lookup_tagfs(struct inode *dir, struct dentry *dentry, unsigned int flags){
 	return lookup_wrapper(dir, dentry, flags, tmp_simple_lookup); // tmp_simple_lookup
 }
-
-int send_request_tag(char *filename){
-	return NULL;
-}
-// EXPORT_SYMBOL(send_request_tag);
-
-
-// struct dentry *send_request_tag(char *filename){
-// 	struct path path;
-// 	get_fs_pwd(current->fs, &path);
-// 	if(path.dentry){
-// 		pr_info("cwd2: %s\n", path.dentry->d_name.name);
-// 	}
-
-// 	test_links(path.dentry, "/mnt/vtagfs/red/a1");
-// 	path_put(&path);
-
-// 	return NULL;
-
-// 	// cwd -> red
-// 	// cwd -> tagfs -> red
-	
-// 	// create new dentry of /mnt/tagfs/<filename>
-
-// }
-
-// EXPORT_SYMBOL(send_request_tag);

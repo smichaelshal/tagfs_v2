@@ -12,6 +12,7 @@
 
 
 #include "publisher/publisher.h"
+#include "hooks/hooks.h"
 #include "api/api.h"
 
 

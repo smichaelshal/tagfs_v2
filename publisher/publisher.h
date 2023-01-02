@@ -8,7 +8,6 @@
 
 extern struct file_system_type vtag_fs_type;
 extern struct dentry *lookup_tagfs(struct inode *dir, struct dentry *dentry, unsigned int flags);
-extern int send_request_tag(char *filename);
 
 // int publish_dentry(struct dentry *dentry);
 
