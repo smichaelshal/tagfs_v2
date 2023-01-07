@@ -14,8 +14,141 @@
 #include <linux/delay.h>
 #include <linux/sched.h>
 #include <linux/sched/signal.h>
+#include <linux/proc_fs.h>
+#include <linux/namei.h>
+#include <linux/slab.h>
+#include <linux/file.h>
+
+#include <linux/fs_struct.h>
 
 #include "hooks.h"
+
+
+// struct proc_dir_entry *
+
+// struct proc_dir_entry* demo_hooks[5];
+
+
+// #define ROOT_TAG_RED "/root/red"
+#define ROOT_TAG_RED "/mnt/vtagfs/red"
+#define PROC_TAG_RED "/proc/red"
+#define ROOT_TAG "/mnt/vtagfs"
+
+
+#define PREFIX "::"
+#define SPLITED '/'
+
+// char *get_proc_path(char *path){
+// 	return NULL;
+// }
+
+bool is_taged_file(struct file *filp){
+	char *buff;
+	char *full_path;
+	bool ret = false;
+
+	buff = kzalloc(PATH_MAX, GFP_KERNEL);
+	if(!buff)
+		return ret;
+
+	full_path = d_path(&filp->f_path, buff, PATH_MAX);
+	if(IS_ERR(full_path))
+		goto out;
+
+	ret = !strncmp(full_path, ROOT_TAG, strlen(ROOT_TAG));
+	if(ret)
+		pr_info("path1: %s\n", full_path);
+
+out:
+	kfree(buff);
+	return ret;
+}
+
+char *get_tag_name(char *src){
+	char *end_item, *buff;
+	long len;
+
+	pr_info("get_tag_name1\n");
+
+	end_item = strchr(src, SPLITED);
+	pr_info("end_item1: %s\n", end_item);
+
+	
+	if(!end_item)
+		end_item = src + strlen(src); // -1 ?
+
+	pr_info("end_item2: %s\n", end_item);
+	
+	len = end_item - src  - strlen(PREFIX);
+	pr_info("len: %ld\n", len);
+
+	buff = kzalloc(len, GFP_KERNEL);
+
+	strncpy(buff, src + strlen(PREFIX), len);
+
+	return buff;
+}
+
+
+struct list_head *dentry_bridges;
+
+struct dentry_bridge {
+   struct list_head list;
+   struct dentry *dentry;
+};
+
+
+struct list_head *init_list(void){
+    struct list_head *list = kzalloc(sizeof(struct list_head), GFP_KERNEL);
+    INIT_LIST_HEAD(list);
+    return list;
+}
+
+int list_add_dentry(struct list_head *list, struct dentry *dentry){
+    struct dentry_bridge *d_bridge;
+	d_bridge = kzalloc(sizeof(struct dentry_bridge), GFP_KERNEL);
+    if(!d_bridge)
+        return -ENOMEM;
+
+    INIT_LIST_HEAD(&d_bridge->list);
+    list_add_tail(&d_bridge->list, list);
+    return 1;
+}
+
+
+/* return true if drop dentry, else return false. */ 
+bool d_drop_unused(struct dentry *dentry){
+	bool ret = false;
+	if(!dentry)
+		return true;
+	spin_lock(&dentry->d_lock);
+	if(dentry->d_lockref.count == 1){
+		ret = true;
+		__d_drop(dentry);
+	}
+	spin_unlock(&dentry->d_lock);
+	return ret;
+}
+
+void d_symlink_tag_release(struct dentry *dentry){
+	pr_info("d_symlink_tag_release_1\n");
+}
+
+int d_symlink_tag_drop_dentry(const struct dentry *dentry)
+{
+	pr_info("d_symlink_tag_drop_dentry_1\n");
+	return 0; // always save the dentry in cache
+}
+
+
+struct dentry_operations symlink_tag_dentry_operations = {
+	.d_release = d_symlink_tag_release,
+	.d_delete = d_symlink_tag_drop_dentry,
+};
+
+struct proc_dir_entry *red_proc = NULL;
+struct dentry *red_dentry = NULL;
+
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,7,0)
 static unsigned long lookup_name(const char *name)
@@ -250,7 +383,82 @@ static char *duplicate_filename(const char __user *filename)
 	return kernel_filename;
 }
 
+struct path *symlink_tag(char *tag){
+	struct proc_dir_entry *tag_proc_symlink = NULL;
+	struct path *path;
+	int err;
+	path = kzalloc(sizeof(struct path), GFP_KERNEL);
+	if(!path)
+		return ERR_PTR(-ENOMEM);
+	
+	err = kern_path(PROC_TAG_RED, 0, path);
+	if(err){
+		tag_proc_symlink = proc_symlink(tag, NULL, ROOT_TAG_RED);
+		if(!tag_proc_symlink)
+			return ERR_PTR(-ENOMEM);
+		
+		red_proc = tag_proc_symlink;
+		err = kern_path(PROC_TAG_RED, 0, path);
+		if(err)
+			return ERR_PTR(-ENOENT);
+	}
+	return path;
+}
 
+struct dentry *link_symlink_dentry(char *tag, struct path *path){
+	struct path pwd;
+	struct qstr qname;
+	struct dentry *dentry, *dir;
+
+	pwd = current->fs->pwd;
+	dir = pwd.dentry;
+
+	qname.name = tag;
+	qname.hash_len = hashlen_string(dir, tag);
+
+	dentry = d_lookup(dir, &qname);
+	if(dentry){
+		if(dentry->d_inode)
+			goto out;
+		else
+			dput(dentry);
+	}
+	
+	dentry = d_alloc_name(pwd.dentry, tag);
+	
+	if(dentry){
+		// dentry->d_fsdata = (void *)ns->ops;
+		d_set_d_op(dentry, &symlink_tag_dentry_operations);
+		// __list_del_entry(&dentry->d_child); // ???
+		d_add(dentry, path->dentry->d_inode);
+		red_dentry = dentry; // dget(dentry);
+		// list_add_dentry(dentry)
+		// hlist_bl_node
+	}else
+		ERR_PTR(-ENOMEM);
+		
+out:
+	path_put(path);
+	kfree(path);
+	return dentry;
+}
+
+struct dentry *link_tag_cwd(char *tag){
+	struct path *path;
+	struct dentry *dentry;
+	char *buff;
+	path = symlink_tag(tag);
+
+	if(IS_ERR(path))
+		return ERR_PTR(-ENOENT);
+		
+	buff = kzalloc(strlen(PREFIX) + strlen(tag), GFP_KERNEL);
+	sprintf(buff, "%s%s", PREFIX, tag);
+	pr_info("buff: %s\n", buff);
+	dentry = link_symlink_dentry(buff, path);
+	kfree(buff);
+	return dentry;
+}
 
 #ifdef PTREGS_SYSCALL_STUBS
 static asmlinkage long (*real_sys_openat)(struct pt_regs *regs);
@@ -258,21 +466,70 @@ static asmlinkage long (*real_sys_openat)(struct pt_regs *regs);
 static asmlinkage long fh_sys_openat(struct pt_regs *regs) // <<<
 {
 	long ret;
+	int err;
 	char *kernel_filename;
+	char *tag_name;
+	struct dentry *dentry;
 
 	kernel_filename = duplicate_filename((void*) regs->si);
-	if (strncmp(kernel_filename, "red", 3) == 0)
+
+	if (strncmp(kernel_filename, PREFIX, strlen(PREFIX)) == 0)
 	{
-		pr_info("opened file : %s\n", kernel_filename);
+		tag_name = get_tag_name(kernel_filename);
+		pr_info("tag_name: %s\n", tag_name);
+
+		/*
+		* Pass only the first item in path without prefix:
+		* kernel_filename = "::red/a1" => link_tag_cwd("red")
+		*/
+
+		dentry = link_tag_cwd(tag_name);
+		
+		if(IS_ERR(dentry)){
+			pr_info("dentry is error\n");
+			return -EINVAL;
+		}
+
+		pr_info("opened file regs: %s\n", kernel_filename);
 		kfree(kernel_filename);
 		ret = real_sys_openat(regs);
-		pr_info("fd returned is %ld\n", ret);
+		pr_info("fd returned is regs %ld\n", ret);
+
+		if(dentry && d_drop_unused(dentry))
+			red_dentry = NULL;
+		
 		return ret;
 	}
 
 	kfree(kernel_filename);
 	ret = real_sys_openat(regs);
 
+	return ret;
+}
+
+static asmlinkage long (*real_sys_close)(struct pt_regs *regs);
+
+static asmlinkage long sys_close(struct pt_regs *regs){
+	long ret;
+	struct file *filp;
+	unsigned fd;
+
+	fd = (unsigned)regs->di;
+
+	filp = fget_raw(fd);
+	if(!filp)
+		goto out;
+
+	if(!is_taged_file(filp))
+		goto out_hook;
+
+	pr_info("sys_close1\n");
+
+out_hook:
+	fput(filp);
+	
+out:
+	ret = real_sys_close(regs);
 	return ret;
 }
 #else
@@ -288,7 +545,7 @@ static asmlinkage long fh_sys_openat(int dfd, const char __user *filename,
 	kernel_filename = duplicate_filename(filename);
 	if (strncmp(kernel_filename, "red", 3) == 0)
 	{
-		pr_info("opened file : %s\n", kernel_filename);
+		pr_info("opened file: %s\n", kernel_filename);
 		kfree(kernel_filename);
 		ret = real_sys_openat(dfd, filename, flags, mode);
 		pr_info("fd returned is %ld\n", ret);
@@ -317,18 +574,20 @@ static asmlinkage long fh_sys_openat(int dfd, const char __user *filename,
 
 #define HOOK(_name, _function, _original)	\
 	{					\
-		.name = SYSCALL_NAME(_name),	\
+		.name = (_name),	\
 		.function = (_function),	\
 		.original = (_original),	\
 	}
 
 static struct ftrace_hook demo_hooks[] = {
-	HOOK("sys_openat", fh_sys_openat, &real_sys_openat),
+	HOOK(SYSCALL_NAME("sys_openat"), fh_sys_openat, &real_sys_openat),
+	HOOK(SYSCALL_NAME("sys_close"), sys_close, &real_sys_close),
 };
 
 int start_hooks(void)
 {
 	int err;
+	dentry_bridges = init_list();
 
 	err = fh_install_hooks(demo_hooks, ARRAY_SIZE(demo_hooks));
 	if (err)
@@ -343,5 +602,11 @@ void close_hooks(void)
 {
 	fh_remove_hooks(demo_hooks, ARRAY_SIZE(demo_hooks));
 
-	pr_info("close_hooks end\n");
+	if(red_dentry){
+		d_drop(red_dentry); //  or d_invalidate(red_dentry);
+	}
+	
+	if(red_proc)
+		proc_remove(red_proc);
+
 }

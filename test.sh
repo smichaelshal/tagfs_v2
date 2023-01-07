@@ -8,20 +8,34 @@ mkdir -p $MOUNT_PATH
 insmod $MODULE_NAME.ko
 mount -t $MODULE_NAME none $MOUNT_PATH
 
-dmesg -wH
+cat ::red/a1
+cat ::red/john/Desktop/asm64.s
+
+umount $MOUNT_PATH
+rmmod $MODULE_NAME
+
+
+dmesg -w
 
 export PS1='> '
-ls -la red
+# ls -laH red/a2
+
+echo 1 > /proc/sys/vm/drop_caches
+echo 2 > /proc/sys/vm/drop_caches
+echo 3 > /proc/sys/vm/drop_caches
+
 
 umount $MOUNT_PATH
 rmmod $MODULE_NAME
 
 
 
+/root/projects/tagfs
+
 
 ./user/user_query
 
-dmesg | tail -20 | less
+dmesg | tail -200 | less
 
 
 
@@ -99,6 +113,7 @@ create_contain(dir, child_dir, tag)
     link_dir(child_dir, dir/".tag"/tag/"contain"/child_dir)
 
 
+
 echo 1 > /proc/sys/vm/drop_caches
 echo 2 > /proc/sys/vm/drop_caches
 echo 3 > /proc/sys/vm/drop_caches
@@ -107,7 +122,7 @@ echo 3 > /proc/sys/vm/drop_caches
 ls -lai /.tag_u13/red/contain_u13/home/contain_u13/john/contain_u13/tes1/this_u13/kk1
 
 cd ..
-zip -r tagfs_err40.zip tagfs
+zip -r tagfs_46.zip tagfs
 python3 -m http.server
 rm -rf tagfs_*.zip
 cd tagfs
