@@ -21,7 +21,9 @@
 
 #include <linux/fs_struct.h>
 
+
 #include "hooks.h"
+#include "../utils/utils.h"
 
 
 // struct proc_dir_entry *
@@ -29,18 +31,12 @@
 // struct proc_dir_entry* demo_hooks[5];
 
 
-// #define ROOT_TAG_RED "/root/red"
-#define ROOT_TAG_RED "/mnt/vtagfs/red"
-#define PROC_TAG_RED "/proc/red"
 #define ROOT_TAG "/mnt/vtagfs"
-
+#define SYMLINK_FILENAME "sym1"
 
 #define PREFIX "::"
 #define SPLITED '/'
 
-// char *get_proc_path(char *path){
-// 	return NULL;
-// }
 
 bool is_taged_file(struct file *filp){
 	char *buff;
@@ -68,24 +64,14 @@ char *get_tag_name(char *src){
 	char *end_item, *buff;
 	long len;
 
-	pr_info("get_tag_name1\n");
-
 	end_item = strchr(src, SPLITED);
-	pr_info("end_item1: %s\n", end_item);
-
 	
 	if(!end_item)
 		end_item = src + strlen(src); // -1 ?
 
-	pr_info("end_item2: %s\n", end_item);
-	
 	len = end_item - src  - strlen(PREFIX);
-	pr_info("len: %ld\n", len);
-
 	buff = kzalloc(len, GFP_KERNEL);
-
 	strncpy(buff, src + strlen(PREFIX), len);
-
 	return buff;
 }
 
@@ -383,29 +369,27 @@ static char *duplicate_filename(const char __user *filename)
 	return kernel_filename;
 }
 
-struct path *symlink_tag(char *tag){
-	struct proc_dir_entry *tag_proc_symlink = NULL;
-	struct path *path;
+struct inode *symlink_tag(char *tag){
+	struct path path;
 	int err;
-	path = kzalloc(sizeof(struct path), GFP_KERNEL);
-	if(!path)
-		return ERR_PTR(-ENOMEM);
+	struct inode *inode;
+	char *symlink_str;
+
+	symlink_str = join_path_str(ROOT_TAG, tag, SYMLINK_FILENAME);
+	if(IS_ERR(symlink_str))
+		return ERR_PTR(-ENOENT);
+
+	err = kern_path(symlink_str, 0, &path);
+	if(err)
+		return ERR_PTR(-ENOENT);
 	
-	err = kern_path(PROC_TAG_RED, 0, path);
-	if(err){
-		tag_proc_symlink = proc_symlink(tag, NULL, ROOT_TAG_RED);
-		if(!tag_proc_symlink)
-			return ERR_PTR(-ENOMEM);
-		
-		red_proc = tag_proc_symlink;
-		err = kern_path(PROC_TAG_RED, 0, path);
-		if(err)
-			return ERR_PTR(-ENOENT);
-	}
-	return path;
+	inode = path.dentry->d_inode;
+	// ihold(inode);
+	path_put(&path);
+	return inode;
 }
 
-struct dentry *link_symlink_dentry(char *tag, struct path *path){
+struct dentry *link_symlink_dentry(char *tag, struct inode *inode){
 	struct path pwd;
 	struct qstr qname;
 	struct dentry *dentry, *dir;
@@ -417,45 +401,42 @@ struct dentry *link_symlink_dentry(char *tag, struct path *path){
 	qname.hash_len = hashlen_string(dir, tag);
 
 	dentry = d_lookup(dir, &qname);
+	
 	if(dentry){
 		if(dentry->d_inode)
 			goto out;
 		else
 			dput(dentry);
 	}
-	
 	dentry = d_alloc_name(pwd.dentry, tag);
 	
 	if(dentry){
 		// dentry->d_fsdata = (void *)ns->ops;
 		d_set_d_op(dentry, &symlink_tag_dentry_operations);
 		// __list_del_entry(&dentry->d_child); // ???
-		d_add(dentry, path->dentry->d_inode);
+		d_add(dentry, inode);
 		red_dentry = dentry; // dget(dentry);
 		// list_add_dentry(dentry)
 		// hlist_bl_node
 	}else
 		ERR_PTR(-ENOMEM);
-		
 out:
-	path_put(path);
-	kfree(path);
 	return dentry;
 }
 
 struct dentry *link_tag_cwd(char *tag){
-	struct path *path;
+	struct inode *inode;
 	struct dentry *dentry;
 	char *buff;
-	path = symlink_tag(tag);
+	inode = symlink_tag(tag);
 
-	if(IS_ERR(path))
+	if(IS_ERR(inode))
 		return ERR_PTR(-ENOENT);
 		
 	buff = kzalloc(strlen(PREFIX) + strlen(tag), GFP_KERNEL);
 	sprintf(buff, "%s%s", PREFIX, tag);
 	pr_info("buff: %s\n", buff);
-	dentry = link_symlink_dentry(buff, path);
+	dentry = link_symlink_dentry(buff, inode);
 	kfree(buff);
 	return dentry;
 }
@@ -489,7 +470,6 @@ static asmlinkage long fh_sys_openat(struct pt_regs *regs) // <<<
 			pr_info("dentry is error\n");
 			return -EINVAL;
 		}
-
 		pr_info("opened file regs: %s\n", kernel_filename);
 		kfree(kernel_filename);
 		ret = real_sys_openat(regs);

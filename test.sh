@@ -9,10 +9,13 @@ insmod $MODULE_NAME.ko
 mount -t $MODULE_NAME none $MOUNT_PATH
 
 cat ::red/a1
-cat ::red/john/Desktop/asm64.s
 
 umount $MOUNT_PATH
 rmmod $MODULE_NAME
+
+cat ::red/john/Desktop/asm64.s
+
+ls -lai $MOUNT_PATH/red
 
 
 dmesg -w
@@ -122,7 +125,7 @@ echo 3 > /proc/sys/vm/drop_caches
 ls -lai /.tag_u13/red/contain_u13/home/contain_u13/john/contain_u13/tes1/this_u13/kk1
 
 cd ..
-zip -r tagfs_46.zip tagfs
+zip -r tagfs_49.zip tagfs
 python3 -m http.server
 rm -rf tagfs_*.zip
 cd tagfs

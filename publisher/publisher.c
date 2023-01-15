@@ -18,16 +18,23 @@
 
 
 #include "publisher.h"
+#include "../utils/utils.h"
 
 #define ROOT_TAG "/mnt/vtagfs"
+#define SYMLINK_FILENAME "sym1"
+
+
 #define FILENAME "/home/john/a1"
 #define FILENAME2 "/home/john/a2"
 #define FILENAME3 "/home/john"
 #define FILENAME4 "/home/john/a3"
 
+
 const struct dentry_operations tag_dentry_operations;
 const struct dentry_operations ramfs_dentry_operations;
 const struct dentry_operations regular_dentry_operations; // my_simple_dentry_operations
+
+
 
 
 // ==================================== debug code ====================================
@@ -131,6 +138,9 @@ struct dentry *mkdir_tag(char *name){
 	struct path path_root_tag;
 	struct inode *inode, *dir;
 	int err;
+	struct dentry *d_sym = NULL;
+	char *symlink_str;
+
 
 	err = kern_path(ROOT_TAG, 0, &path_root_tag); // LOOKUP_REVAL
 	if (err)
@@ -150,7 +160,6 @@ struct dentry *mkdir_tag(char *name){
 	
 	err = dir->i_op->mkdir(&init_user_ns, dir, dentry, 0);
 
-
 	if(err){
 		dentry = NULL;
 	}
@@ -159,6 +168,23 @@ struct dentry *mkdir_tag(char *name){
 		dentry->d_fsdata = (void *)(unsigned long)(dentry->d_inode->i_ino);
 		spin_unlock(&dentry->d_lock);
 		inode = dentry->d_inode;
+
+
+		d_sym = d_alloc_name(dentry, SYMLINK_FILENAME);
+		// d_sym->d_flags |= DCACHE_DENTRY_CURSOR;
+
+		if(!d_sym)
+			goto out;
+		d_add(d_sym, NULL);
+
+		symlink_str = join_path_str(ROOT_TAG, name);
+		if(IS_ERR(symlink_str))
+			goto out;
+
+		err = dir->i_op->symlink(&init_user_ns, inode, d_sym, symlink_str);
+		kfree(symlink_str);
+		if(err)
+			goto out;
 
 		test_links(dentry, FILENAME);
 		test_links(dentry, FILENAME2);
@@ -175,6 +201,7 @@ out:
 // return NULL FAILD
 struct dentry *lookup_query(struct inode *dir, struct dentry *dentry, unsigned int flags){
 	struct dentry *new_dentry = NULL;
+	char *p;
 
 	if (dentry->d_name.len > NAME_MAX){
 		return NULL;

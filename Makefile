@@ -15,6 +15,8 @@ vtagfs-y += api/device_api.o
 
 vtagfs-y += hooks/hooks.o
 
+vtagfs-y += utils/utils.o
+
 ccflags-y := -I$(src)
 ccflags-y := -I$(src)/include/ramfs
 ccflags-y := -I$(src)/publisher
@@ -22,6 +24,7 @@ ccflags-y := -I$(src)/layout
 ccflags-y := -I$(src)/layout/hardlinking
 ccflags-y := -I$(src)/api
 ccflags-y := -I$(src)/hooks
+ccflags-y := -I$(src)/utils
 
 else
 # normal makefile
@@ -34,6 +37,7 @@ SUBDIRS += publisher
 SUBDIRS += user
 SUBDIRS += api
 SUBDIRS += hooks
+SUBDIRS += utils
 
 .PHONY: all clean
 default: mod

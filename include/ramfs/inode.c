@@ -153,7 +153,7 @@ static int ramfs_symlink(struct user_namespace *mnt_userns, struct inode *dir,
 		error = page_symlink(inode, symname, l);
 		if (!error) {
 			d_instantiate(dentry, inode);
-			dget(dentry);
+			// dget(dentry);  // pin ???
 			dir->i_mtime = dir->i_ctime = current_time(dir);
 		} else
 			iput(inode);
@@ -179,7 +179,7 @@ static const struct inode_operations ramfs_dir_inode_operations = {
 	.lookup		= lookup_tagfs, // simple_lookup <<
 	.link		= simple_link,
 	.unlink		= simple_unlink, // <<<
-	.symlink	= ramfs_symlink,
+	.symlink	= ramfs_symlink, // <<<?
 	.mkdir		= ramfs_mkdir,
 	.rmdir		= simple_rmdir, // <<<
 	.mknod		= ramfs_mknod,
