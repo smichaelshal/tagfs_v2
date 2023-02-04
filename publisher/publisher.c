@@ -17,8 +17,13 @@
 #include <linux/fs_struct.h>
 
 
+// #include "../vtagfs.h"
 #include "publisher.h"
 #include "../utils/utils.h"
+
+#include "../database/database.h"
+
+
 
 #define ROOT_TAG "/mnt/vtagfs"
 #define SYMLINK_FILENAME "sym1"
@@ -34,7 +39,8 @@ const struct dentry_operations tag_dentry_operations;
 const struct dentry_operations ramfs_dentry_operations;
 const struct dentry_operations regular_dentry_operations; // my_simple_dentry_operations
 
-
+struct dentry *build_tag(char *name);
+struct dentry *lookup_tag_file(struct inode *dir, struct dentry *dentry, unsigned int flags);
 
 
 // ==================================== debug code ====================================
@@ -197,24 +203,45 @@ out:
 	return dentry;
 }
 
+
+
+struct dentry *create_vtag_dir(struct tag *tag){
+	struct dentry *vdir;
+	vdir = mkdir_tag(tag->name); // <<<
+	vdir->d_inode->i_private = (void *)tag;
+	tag->vdir = vdir;
+	return vdir;
+}
+
 // return dentry success
 // return NULL FAILD
 struct dentry *lookup_query(struct inode *dir, struct dentry *dentry, unsigned int flags){
-	struct dentry *new_dentry = NULL;
+	struct dentry *vdir, *new_dentry;
+	struct tag *tag;
 	char *p;
+
+	new_dentry = NULL;
 
 	if (dentry->d_name.len > NAME_MAX){
 		return NULL;
 	}
-	
-	if(!strcmp(dentry->d_name.name, "red")){
-		pr_info("its red file\n");
-		new_dentry = mkdir_tag((char*)(dentry->d_name.name));
-	}
 
-	if(new_dentry)
-		return new_dentry;
-	return NULL;
+	tag = lookup_tag(dentry->d_name.name); // ***
+	if(!tag)
+		return NULL;
+	
+	// tag->dir;
+	vdir = create_vtag_dir(tag);
+	return vdir; // ???
+	
+	// if(!strcmp(dentry->d_name.name, "red")){
+	// 	pr_info("its red file\n");
+	// 	new_dentry = mkdir_tag((char*)(dentry->d_name.name));
+	// }
+
+	// if(new_dentry)
+	// 	return new_dentry;
+	// return NULL;
 }
 
 const struct dentry_operations tag_dentry_operations = {
@@ -242,9 +269,55 @@ struct dentry *lookup_wrapper(struct inode *dir, struct dentry *dentry, unsigned
 	new_dentry = lookup_query(dir, dentry, flags);
 	if(new_dentry)
 		return new_dentry;
+	
+	new_dentry = lookup_tag_file(dir, dentry, flags); // ***
+	if(new_dentry)
+		return new_dentry;
+	
 	return lookup_specific_fs(dir, dentry, flags);
 }
 
 struct dentry *lookup_tagfs(struct inode *dir, struct dentry *dentry, unsigned int flags){
 	return lookup_wrapper(dir, dentry, flags, tmp_simple_lookup); // tmp_simple_lookup
+}
+
+struct dentry *build_tag(char *name){ // ???
+	// build all structs
+
+	//mkdir for tag in dcache
+
+	return NULL;
+}
+
+struct dentry *lookup_tag_file(struct inode *dir, struct dentry *dentry, unsigned int flags){
+	// lookup taged file if the file not found in dcache
+
+	// struct tag *tag = (struct tag *)dir->i_private;
+	// lookup_branch and load to dcache
+	// lookup dentry of the file and return if found
+
+	// pin only the required file
+
+	return NULL;
+}
+
+
+struct dentry *load_datafile(struct tag *tag, struct datafile *datafile){
+	struct dentry *child;
+	struct inode *inode;
+
+	inode = iget_locked(tag->dir->d_inode->i_sb, datafile->ino); // sb ???
+	if(!inode)
+		return ERR_PTR(-ENOENT);
+
+	child = d_alloc_name(tag->vdir, datafile->name);
+	if(!child){
+		iput(inode);
+		return ERR_PTR(-ENOMEM);
+	}
+
+	d_set_d_op(child, &regular_dentry_operations);
+	d_add(child, inode);
+	// dput(child); // unpin ???
+	return child;
 }

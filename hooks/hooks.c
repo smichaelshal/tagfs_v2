@@ -9,7 +9,6 @@
 #include <linux/kprobes.h>
 #include <linux/delay.h>
 #include <linux/kthread.h>
-#include <linux/kernel.h>
 #include <asm/signal.h>
 #include <linux/delay.h>
 #include <linux/sched.h>
@@ -36,7 +35,7 @@
 
 #define PREFIX "::"
 #define SPLITED '/'
-
+static asmlinkage long fh_sys_generic(struct pt_regs *regs, asmlinkage long (*real_sys_func)(struct pt_regs *));
 
 bool is_taged_file(struct file *filp){
 	char *buff;
@@ -443,48 +442,20 @@ struct dentry *link_tag_cwd(char *tag){
 
 #ifdef PTREGS_SYSCALL_STUBS
 static asmlinkage long (*real_sys_openat)(struct pt_regs *regs);
+static asmlinkage long (*real_sys_getdents)(struct pt_regs *regs);
+static asmlinkage long (*real_sys_getdents64)(struct pt_regs *regs);
 
-static asmlinkage long fh_sys_openat(struct pt_regs *regs) // <<<
-{
-	long ret;
-	int err;
-	char *kernel_filename;
-	char *tag_name;
-	struct dentry *dentry;
 
-	kernel_filename = duplicate_filename((void*) regs->si);
+static asmlinkage long fh_sys_openat(struct pt_regs *regs){
+	return fh_sys_generic(regs, real_sys_openat);
+}
 
-	if (strncmp(kernel_filename, PREFIX, strlen(PREFIX)) == 0)
-	{
-		tag_name = get_tag_name(kernel_filename);
-		pr_info("tag_name: %s\n", tag_name);
+static asmlinkage long fh_sys_getdents64(struct pt_regs *regs){
+	return fh_sys_generic(regs, real_sys_getdents64);
+}
 
-		/*
-		* Pass only the first item in path without prefix:
-		* kernel_filename = "::red/a1" => link_tag_cwd("red")
-		*/
-
-		dentry = link_tag_cwd(tag_name);
-		
-		if(IS_ERR(dentry)){
-			pr_info("dentry is error\n");
-			return -EINVAL;
-		}
-		pr_info("opened file regs: %s\n", kernel_filename);
-		kfree(kernel_filename);
-		ret = real_sys_openat(regs);
-		pr_info("fd returned is regs %ld\n", ret);
-
-		if(dentry && d_drop_unused(dentry))
-			red_dentry = NULL;
-		
-		return ret;
-	}
-
-	kfree(kernel_filename);
-	ret = real_sys_openat(regs);
-
-	return ret;
+static asmlinkage long fh_sys_getdents(struct pt_regs *regs){
+	return fh_sys_generic(regs, real_sys_getdents);
 }
 
 static asmlinkage long (*real_sys_close)(struct pt_regs *regs);
@@ -561,6 +532,8 @@ static asmlinkage long fh_sys_openat(int dfd, const char __user *filename,
 
 static struct ftrace_hook demo_hooks[] = {
 	HOOK(SYSCALL_NAME("sys_openat"), fh_sys_openat, &real_sys_openat),
+	HOOK(SYSCALL_NAME("sys_getdents"), fh_sys_getdents, &real_sys_getdents),
+	HOOK(SYSCALL_NAME("sys_getdents64"), fh_sys_getdents64, &real_sys_getdents64),
 	HOOK(SYSCALL_NAME("sys_close"), sys_close, &real_sys_close),
 };
 
@@ -589,4 +562,46 @@ void close_hooks(void)
 	if(red_proc)
 		proc_remove(red_proc);
 
+}
+// wrapper
+static asmlinkage long fh_sys_generic(struct pt_regs *regs, asmlinkage long (*real_sys_func)(struct pt_regs *)) // <<<
+{
+	
+	long ret;
+	int err;
+	char *kernel_filename;
+	char *tag_name;
+	struct dentry *dentry;
+
+	kernel_filename = duplicate_filename((void*) regs->si);
+
+	if (strncmp(kernel_filename, PREFIX, strlen(PREFIX)) == 0)
+	{
+		pr_info("is taged request\n");
+
+		tag_name = get_tag_name(kernel_filename);
+
+		/*
+		* Pass only the first item in path without prefix:
+		* kernel_filename = "::red/a1" => link_tag_cwd("red")
+		*/
+
+		dentry = link_tag_cwd(tag_name);
+		
+		if(IS_ERR(dentry)){
+			return -EINVAL;
+		}
+		kfree(kernel_filename);
+		ret = real_sys_func(regs);
+
+		if(dentry && d_drop_unused(dentry))
+			red_dentry = NULL;
+		
+		return ret;
+	}
+
+	kfree(kernel_filename);
+	ret = real_sys_func(regs);
+
+	return ret;
 }

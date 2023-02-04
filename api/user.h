@@ -22,6 +22,7 @@ struct lookup_single_tag {
 #define IOCTL_QUERY 0x67
 #define IOCTL_LOOKU_QUERY 0x68
 #define IOCTL_ADD_TAG _IOR(IOCTL_BASE, IOCTL_QUERY, struct add_single_tag)
+#define IOCTL_DELETE_TAG _IOW(IOCTL_BASE, IOCTL_QUERY, struct add_single_tag)
 #define IOCTL_LOOKUP_TAG _IOR(IOCTL_BASE, IOCTL_LOOKU_QUERY, struct lookup_single_tag)
 
 

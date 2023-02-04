@@ -125,7 +125,7 @@ echo 3 > /proc/sys/vm/drop_caches
 ls -lai /.tag_u13/red/contain_u13/home/contain_u13/john/contain_u13/tes1/this_u13/kk1
 
 cd ..
-zip -r tagfs_49.zip tagfs
+zip -r tagfs_err66.zip tagfs
 python3 -m http.server
 rm -rf tagfs_*.zip
 cd tagfs
@@ -154,3 +154,90 @@ touch /home/john/jj$DBG_VERS
 ./user/user_query /home/john/jj$DBG_VERS gree$DBG_VERS
 
 dmesg | tail -20 | less
+
+
+
+
+############################################# >
+
+mkdir -p test
+dd if=/dev/zero of=test_over.img bs=1M count=50
+mkfs.ext4 test2.img
+
+sudo mount -o loop -t ext4 test.img test
+umount test
+
+dd if=/dev/zero bs=1M count=50 >> test.img
+
+pvcreate /dev/loop15
+
+dd if=/dev/zero of=test2.img bs=1M count=50
+
+sudo losetup --partscan -f test.img
+sudo vgscan --scan
+sudo vgchange -ay /dev/loop15
+
+
+mkdir test_va
+
+dd if=/dev/zero of=disk1.img bs=1M count=50
+LOOP_DEV=losetup --find --show ./disk1.img
+pvcreate $LOOP_DEV
+
+vgcreate vg01 $LOOP_DEV
+
+lvcreate -n lvdata01 -L 20MB vg01
+mkfs.ext4 /dev/vg01/lvdata01
+
+mount /dev/vg01/lvdata01 test_va
+
+lvextend /dev/vg01/lvdata01 -L30M
+
+############################################# <
+
+export MODULE_NAME=vtagfs
+export MOUNT_PATH=/mnt/vtagfs
+
+lsmod | grep $MODULE_NAME
+
+mkdir -p $MOUNT_PATH
+
+
+
+export PS1='> '
+
+insmod $MODULE_NAME.ko
+mount -t $MODULE_NAME none $MOUNT_PATH
+
+dmesg -w
+
+
+./user/user_query /home/john/dhh1/hhh2 red52
+
+ls ::red52
+
+ls /mnt/vtagfs/red52/sym1
+
+ls ::red
+
+umount $MOUNT_PATH
+rmmod $MODULE_NAME
+
+
+touch /home/john/dhh1/hhh2
+
+
+getfattr -d -m ".*" /red46/dmap0003/hhh2
+
+getfattr -d -m ".*" /red28/dmap0002/hhh1
+s
+
+setfattr -n "security.ino2" -v "test2" /red46/dmap0002/hhh1
+
+
+
+echo 1 > /proc/sys/vm/drop_caches
+echo 2 > /proc/sys/vm/drop_caches
+echo 3 > /proc/sys/vm/drop_caches
+
+cat /proc/kallsyms | grep -i "sys_openat"

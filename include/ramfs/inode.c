@@ -15,11 +15,37 @@
 #include <linux/uaccess.h>
 #include <linux/fs_context.h>
 #include <linux/fs_parser.h>
+
+#include <linux/ftrace.h>
+#include <linux/kallsyms.h>
+#include <linux/kernel.h>
+#include <linux/linkage.h>
+#include <linux/module.h>
+#include <linux/slab.h>
+#include <linux/uaccess.h>
+#include <linux/version.h>
+#include <linux/kprobes.h>
+#include <linux/delay.h>
+#include <linux/kthread.h>
+#include <asm/signal.h>
+#include <linux/delay.h>
+#include <linux/sched.h>
+#include <linux/sched/signal.h>
+#include <linux/proc_fs.h>
+#include <linux/namei.h>
+#include <linux/slab.h>
+#include <linux/file.h>
+
+#include <linux/fs_struct.h>
+
 // #include "internal.h" // >>
 #include "../../vtagfs.h" // <<
 #include "ramfs.h" // <<
 
+#include "../../database/database.h"
+
 int count_red = 0;
+
 
 struct ramfs_mount_opts {
 	umode_t mode;
@@ -36,6 +62,71 @@ static const struct inode_operations ramfs_dir_inode_operations;
 
 
 // ==================================== my code ====================================
+
+#define DOT_STR "."
+#define DOTDOT_STR ".."
+
+
+
+
+int tag_readdir(struct file *file, struct dir_context *ctx); // ***
+struct file *get_file_tag(struct tag *tag); // ***
+struct file *get_file_branch(struct branch *branch);  // ***
+int tagfs_readdir(struct file *file, struct dir_context *ctx); // ***
+
+struct getdents_callback { // ???
+	struct dir_context ctx;
+	void *data;
+	struct dentry *dir;
+};
+
+
+static int iter_tag(struct dir_context *ctx, const char *name, int len, // ***
+			loff_t pos, u64 ino, unsigned int d_type)
+{
+	struct getdents_callback *buf =
+		container_of(ctx, struct getdents_callback, ctx);
+	int result = 0;
+    int err;
+    struct branch *branch;
+
+	// buf->sequence++;
+   
+    if(!strcmp(name, DOT_STR) || !strcmp(name, DOTDOT_STR))
+       goto out;
+    
+	branch = alloc_branch();
+	// branch->nr = name; // ??? string_to_long
+	fill_branch(branch, name, buf->dir);
+	// branch->dir
+
+	buf->data = branch;
+out:
+	return result;
+}
+
+static int iter_branch(struct dir_context *ctx, const char *name, int len, // ***
+			loff_t pos, u64 ino, unsigned int d_type){
+
+struct getdents_callback *buf =
+		container_of(ctx, struct getdents_callback, ctx);
+	int result = 0;
+    int err;
+    struct datafile *datafile;
+
+	// buf->sequence++;
+   
+    if(!strcmp(name, DOT_STR) || !strcmp(name, DOTDOT_STR))
+       goto out;
+    
+	datafile = alloc_datafile();
+	// if(!datafile) // err <<<
+	fill_datafile(datafile, name, buf->dir);
+
+out:
+	return result;
+}
+
 
 #include <linux/blkdev.h>
 #include <linux/export.h>
@@ -63,7 +154,8 @@ const struct file_operations simple_dir_operations = {
 	.release	= dcache_dir_close,
 	.llseek		= dcache_dir_lseek,
 	.read		= generic_read_dir,
-	.iterate_shared	= dcache_readdir,
+	// .iterate_shared	= dcache_readdir, // <<<
+	.iterate_shared	= tag_readdir, // <<<
 	.fsync		= noop_fsync,
 };
 
@@ -322,3 +414,153 @@ struct file_system_type vtag_fs_type = {
 	.kill_sb	= ramfs_kill_sb,
 	.fs_flags	= FS_USERNS_MOUNT,
 };
+
+
+
+int tag_readdir(struct file *file, struct dir_context *ctx) {
+	// try to lookup branch in dcahce, else try load branch from disk
+	pr_info("aa0\n");
+	
+
+	struct tag *tag;
+	struct file *tag_file;
+	struct file *branch_file;
+	int err;
+
+	pr_info("bb0\n");
+
+	struct branch *branch;
+	struct datafile *datafile;
+
+	pr_info("bb1\n");
+
+	struct getdents_callback getdents_tag = {
+		.ctx.actor = iter_tag,
+		.dir = tag->dir,
+	};
+
+	pr_info("bb2\n");
+
+	struct getdents_callback getdents_branch = {
+		.ctx.actor = iter_branch,
+	};
+
+	pr_info("aa1\n");
+
+	tag = (struct tag *)file->f_inode->i_private;
+	
+	
+	
+	if(!tag->last_branch){
+		pr_info("aa2\n");
+
+		tag_file = get_file_tag(tag);
+
+		pr_info("aa3\n");
+
+
+		if(!tag_file){
+			pr_info("aa4\n");
+			// return -EINVAL; // ;;;
+		}
+
+		pr_info("aa5\n");
+		iterate_dir(tag_file, &getdents_tag.ctx); // get branch
+		pr_info("aa6\n");
+		branch = getdents_tag.data;
+		pr_info("aa7\n");
+
+				
+		
+		if(!branch){
+			pr_info("aa8\n");
+			fput(tag_file);
+			tag->filp = NULL;
+			// return 0; // ??? end of files in tag  // ;;;
+		}
+		pr_info("aa9\n");
+
+	}else{
+		pr_info("aa10\n");
+		branch = tag->last_branch;
+	}
+	pr_info("aa11\n");
+	return dcache_readdir(file, ctx); // ???
+
+	// // if(!branch->dir) // error ???
+	// getdents_branch.dir = branch->dir;  // ;;;
+
+	// branch_file = get_file_branch(branch);
+	// if(!branch_file)
+	// 	return -EINVAL;
+
+	// iterate_dir(branch_file, &getdents_branch.ctx); // get branch
+	// datafile = getdents_branch.data;
+
+	// if(!datafile){
+	// 	fput(branch_file);
+	// 	tag->last_branch = NULL;
+	// 	return -1; // ??? pass to next branch
+	// }
+
+	// load_datafile(tag, datafile); // <<<
+
+	// return dcache_readdir(file, ctx); // ???
+
+
+	
+	/*
+		for branch in tag:
+			for datafile in branch:
+				add to dcache
+	*/
+
+
+	// if(!branch_file) // pass to next branch
+	
+	// get file
+	// for each in iter:
+
+
+	/*
+	 lookup in dcache:
+		 if dcache found and stale:
+		 	delete branch
+
+		if branch not load:
+			lookup and load branch
+		
+		if branch load:
+			lock shrink branch
+		else
+			add current file to dcache ???
+
+	*/
+	return 0;
+}
+
+
+struct file *get_file_tag(struct tag *tag){ // ???
+	// return the file of <tag>/rmap
+	struct file *filp;
+
+	if(tag->filp)
+		return filp;
+
+	filp = dentry_open(&tag->path, O_RDONLY, current_cred());
+	tag->filp = filp;
+	return filp;
+}
+
+struct file *get_file_branch(struct branch *branch){
+	// return the file of <tag>/rmap
+	struct file *filp;
+
+	if(branch->filp)
+		return filp;
+
+	
+	filp = dentry_open(&branch->path, O_RDONLY, current_cred());
+	branch->filp = filp;
+	return filp;
+}

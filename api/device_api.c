@@ -9,12 +9,19 @@
 #include <linux/slab.h>
 
 #include "api.h"
-#include "../layout/layout.h"
+// #include "../layout/layout.h"
+#include "../database/database.h"
+#include "../database/db_fs/db_fs.h"
 
 
 static dev_t first; // Global variable for the first device number
 static struct cdev c_dev; // Global variable for the character device structure
 static struct class *cl; // Global variable for the device class
+
+// struct database *db = NULL;
+
+int taged_file_by_fd(unsigned int fd, char *name);
+
 
 static int tagfs_dev_open(struct inode *i, struct file *f)
 {
@@ -40,23 +47,26 @@ static ssize_t tagfs_dev_write(struct file *f, const char __user *buf, size_t le
 
 static long tagfs_dev_ioctl(struct file *file, unsigned int cmd, unsigned long arg){
     int ret = 0;
+    // struct tag *tag;
     struct add_single_tag *request = kzalloc(sizeof(struct add_single_tag), GFP_KERNEL);
     struct lookup_single_tag *request2 = kzalloc(sizeof(struct lookup_single_tag), GFP_KERNEL);
     if(!request){
 		return -ENOMEM;
 	}
 
+    // tag = kzalloc(sizeof(struct tag), GFP_KERNEL);
+
     switch (cmd) {
         case IOCTL_ADD_TAG:
             ret = copy_from_user(request, (char __user *)arg, sizeof(struct add_single_tag));
-            add_tag(request->fd, request->tag);
-            // add_tag(request->path, request->tag, request->fd);
+            ret = taged_file_by_fd(request->fd, request->tag);
             break;
 
-         case IOCTL_LOOKUP_TAG:
-            ret = copy_from_user(request2, (char __user *)arg, sizeof(struct lookup_single_tag));
-            lookup_tag_root(request2->tag);
-            break;
+
+        //  case IOCTL_LOOKUP_TAG: // testing, in the end this is run in the hook and not with ioctl
+        //     ret = copy_from_user(request2, (char __user *)arg, sizeof(struct lookup_single_tag));
+        //     // lookup_by_name(db, request2->tag, );
+        //     break;
     }
     kfree(request);
     return ret;
@@ -76,6 +86,11 @@ int __init vtag_dev_init(void) /* Constructor */
 {
     int ret;
     struct device *dev_ret;
+
+    // db = init_db_fs();
+    // if(IS_ERR(db))
+    //     return PTR_ERR(db);
+    
 
     if ((ret = alloc_chrdev_region(&first, 0, 1, TAGFS_DEVICE_NAME)) < 0)
     {
@@ -118,3 +133,30 @@ void __exit vtag_dev_exit(void) /* Destructor */
 // MODULE_LICENSE("GPL");
 // MODULE_AUTHOR("Anil Kumar Pugalia <email@sarika-pugs.com>");
 // MODULE_DESCRIPTION("Our First Character Driver");
+
+struct dentry *get_dentry_by_fd(unsigned int fd){
+    struct file *file;
+    struct dentry *dentry;
+    // struct vfsmount *mnt;
+
+    if(!fd)
+        return NULL;
+
+    file = fget(fd);
+    if(!file)
+        return NULL;
+
+    dentry = dget(file->f_path.dentry);
+    // mnt = file->f_path.mnt;
+    fput(file);
+    return dentry;
+}
+
+int taged_file_by_fd(unsigned int fd, char *name){
+    struct dentry *dentry;
+    int err;
+    dentry = get_dentry_by_fd(fd);
+    err = taged_file(dentry, name);
+    dput(dentry);
+    return err;
+}
