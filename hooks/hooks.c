@@ -444,6 +444,8 @@ struct dentry *link_tag_cwd(char *tag){
 static asmlinkage long (*real_sys_openat)(struct pt_regs *regs);
 static asmlinkage long (*real_sys_getdents)(struct pt_regs *regs);
 static asmlinkage long (*real_sys_getdents64)(struct pt_regs *regs);
+static asmlinkage long (*real_sys_lstat)(struct pt_regs *regs);
+
 
 
 static asmlinkage long fh_sys_openat(struct pt_regs *regs){
@@ -452,6 +454,11 @@ static asmlinkage long fh_sys_openat(struct pt_regs *regs){
 
 static asmlinkage long fh_sys_getdents64(struct pt_regs *regs){
 	return fh_sys_generic(regs, real_sys_getdents64);
+}
+
+static asmlinkage long fh_sys_lstat(struct pt_regs *regs){
+	pr_info("start fh_sys_lstat1\n");
+	return fh_sys_generic(regs, real_sys_lstat);
 }
 
 static asmlinkage long fh_sys_getdents(struct pt_regs *regs){
@@ -534,6 +541,9 @@ static struct ftrace_hook demo_hooks[] = {
 	HOOK(SYSCALL_NAME("sys_openat"), fh_sys_openat, &real_sys_openat),
 	HOOK(SYSCALL_NAME("sys_getdents"), fh_sys_getdents, &real_sys_getdents),
 	HOOK(SYSCALL_NAME("sys_getdents64"), fh_sys_getdents64, &real_sys_getdents64),
+	HOOK(SYSCALL_NAME("sys_lstat"), fh_sys_lstat, &real_sys_lstat),
+	// HOOK("__do_sys_lstat", fh_sys_lstat, &real_sys_lstat),
+	// HOOK("__ia32_sys_lstat", fh_sys_lstat, &real_sys_lstat),
 	HOOK(SYSCALL_NAME("sys_close"), sys_close, &real_sys_close),
 };
 

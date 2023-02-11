@@ -31,6 +31,10 @@ struct branch *alloc_branch(void){ //::: use slab
     return kzalloc(sizeof(struct branch), GFP_KERNEL);
 }
 
+struct tag_context *alloc_tag_context(void){ //::: use slab
+    return kzalloc(sizeof(struct tag_context), GFP_KERNEL);
+}
+
 struct datafile *alloc_datafile(void){ //::: use slab
     return kzalloc(sizeof(struct datafile), GFP_KERNEL);
 }
@@ -44,6 +48,22 @@ void put_datafile(struct datafile *df){
     kfree(df);
 }
 
+void put_tag_context(struct tag_context *tag_ctx){
+    kfree(tag_ctx);
+}
+
+bool is_branch_stale(struct branch *branch){ // <<<
+	return !atomic_read(&branch->is_stale);
+}
+
+void make_stale(struct branch *branch){
+	atomic_set(&branch->is_stale, 1);
+}
+
+void clean_stale(struct branch *branch){
+	atomic_set(&branch->is_stale, 0);
+}
+
 
 int fill_tag(struct tag *tag, char *name, struct dentry *dir){
     char *buff_name, *buff_path, *full_path;
@@ -51,20 +71,28 @@ int fill_tag(struct tag *tag, char *name, struct dentry *dir){
 
     if(!tag)
         return -EINVAL;
+
+
+    INIT_LIST_HEAD(&tag->dbs);
+    INIT_LIST_HEAD(&tag->sub_branchs);
     
     buff_name = kzalloc(strlen(name), GFP_KERNEL);
-    if(!buff_name)
+    if(!buff_name){
         return -ENOMEM;
+    }
 
+    
     buff_path = kzalloc(PATH_MAX, GFP_KERNEL);
-    if(!buff_path)
+   
+    if(!buff_path){
         return -ENOMEM;
+    }
 
     tag->dir = dget(dir);
-
-    
     
     full_path = dentry_path_raw(tag->dir, buff_path, PATH_MAX);
+
+
     if(!IS_ERR(full_path)){
         pr_info("full_path: %s\n", full_path);
         err = kern_path(full_path, 0, &tag->path);
@@ -73,13 +101,12 @@ int fill_tag(struct tag *tag, char *name, struct dentry *dir){
 
     kfree(buff_path);
     if(err){
-        return err;
         kfree(buff_name);
+        return err;
     }
-
     strcpy(buff_name, name);
     tag->name = buff_name;
-
+    tag->magic = TAG_MAGIC;
     return 0;
 }
 
@@ -145,16 +172,33 @@ int untaged_file(struct dentry *d_file, char *name){
     return err;
 }
 
-struct tag *lookup_tag(char *name){
+int list_add_sb(struct list_head *list, struct super_block *sb){
+    struct database *database;
+	database = kzalloc(sizeof(struct database), GFP_KERNEL);
+    if(!database)
+        return -ENOMEM;
+
+    INIT_LIST_HEAD(&database->t_child);
+    database->sb = sb;
+    list_add_tail(&database->t_child, list);
+    return 0;
+}
+
+struct tag *lookup_tag_test(char *name){
+    // only in test, this is now only one disk.
 
     struct path root;
     struct super_block *sb;
     struct tag *tag;
-    
+
     root = current->fs->root;
     sb = root.dentry->d_inode->i_sb;
 
+
     tag = lookup_tag_by_sb(sb, name);
+
+	list_add_sb(&tag->dbs, sb); 
+
     return tag;
     
 
@@ -176,6 +220,7 @@ struct tag *lookup_tag_by_sb(struct super_block *sb, char *name){ // ~~~
     struct dentry *dir_tag, *dmap, *rmap;
     struct tag *tag;
     int err;
+
 
     dir_tag = db_lookup_dentry(sb->s_root, name);
     if(!dir_tag)
@@ -281,9 +326,12 @@ int taged_file_by_tag(struct dentry *d_file, struct tag *tag){ // ~~~
 
 int fill_branch(struct branch *branch, char *name, struct dentry *dir){
     struct dentry *dentry;
+    pr_info("fill_branch: dir: %s\n", dir->d_name.name);
+
     dentry = db_lookup_dentry(dir, name);
     if(!dentry)
         return -ENOENT; 
+    pr_info("fill_branch: dentry: %s\n", dentry->d_name.name);
     
     branch->name = name;
     branch->dir = dentry;

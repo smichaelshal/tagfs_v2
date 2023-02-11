@@ -125,7 +125,7 @@ echo 3 > /proc/sys/vm/drop_caches
 ls -lai /.tag_u13/red/contain_u13/home/contain_u13/john/contain_u13/tes1/this_u13/kk1
 
 cd ..
-zip -r tagfs_err66.zip tagfs
+zip -r tagfs_err73.zip tagfs
 python3 -m http.server
 rm -rf tagfs_*.zip
 cd tagfs
@@ -194,6 +194,10 @@ mount /dev/vg01/lvdata01 test_va
 lvextend /dev/vg01/lvdata01 -L30M
 
 ############################################# <
+export PS1='> '
+
+make clean
+make all
 
 export MODULE_NAME=vtagfs
 export MOUNT_PATH=/mnt/vtagfs
@@ -203,25 +207,34 @@ lsmod | grep $MODULE_NAME
 mkdir -p $MOUNT_PATH
 
 
-
-export PS1='> '
-
 insmod $MODULE_NAME.ko
 mount -t $MODULE_NAME none $MOUNT_PATH
 
 dmesg -w
 
+./user/read_dir ::blue
 
-./user/user_query /home/john/dhh1/hhh2 red52
+umount $MOUNT_PATH
+rmmod $MODULE_NAME
 
-ls ::red52
+
+
+
+
+
+
+./user/user_query /home/john/dhh1/hhh2 blue
+
+
+ls ::blue
 
 ls /mnt/vtagfs/red52/sym1
 
 ls ::red
 
-umount $MOUNT_PATH
-rmmod $MODULE_NAME
+./user/read_dir ::blue
+
+
 
 
 touch /home/john/dhh1/hhh2

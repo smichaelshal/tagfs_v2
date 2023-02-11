@@ -13,7 +13,7 @@ extern struct file_system_type vtag_fs_type;
 extern struct dentry *lookup_tagfs(struct inode *dir, struct dentry *dentry, unsigned int flags);
 extern int test_links(struct dentry *dir, char *file_path);
 
-extern struct dentry *load_datafile(struct tag *tag, struct datafile *datafile);
+extern struct dentry *load_datafile(struct tag_context *tag_ctx, struct datafile *datafile);
 
 
 
