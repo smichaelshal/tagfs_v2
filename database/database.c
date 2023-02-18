@@ -1,30 +1,21 @@
+// database.c
+
 #include "database.h"
 
-#include <linux/ftrace.h>
-#include <linux/kallsyms.h>
-#include <linux/kernel.h>
-#include <linux/linkage.h>
-#include <linux/module.h>
-#include <linux/slab.h>
-#include <linux/uaccess.h>
-#include <linux/version.h>
-#include <linux/kprobes.h>
-#include <linux/delay.h>
-#include <linux/kthread.h>
-#include <asm/signal.h>
-#include <linux/delay.h>
-#include <linux/sched.h>
-#include <linux/sched/signal.h>
-#include <linux/proc_fs.h>
-#include <linux/namei.h>
-#include <linux/slab.h>
-#include <linux/file.h>
-#include <linux/fs_struct.h>
+struct db_tag *alloc_db_tag(void){ //::: use slab
+    return kzalloc(sizeof(struct db_tag), GFP_KERNEL);
+}
 
+struct vtag *alloc_vtag(void){ //::: use slab
+    return kzalloc(sizeof(struct vtag), GFP_KERNEL);
+}
 
-
-struct tag *alloc_tag(void){ //::: use slab
-    return kzalloc(sizeof(struct tag), GFP_KERNEL);
+void put_vtag(struct vtag *vtag){
+    // if(vtag->vdir->d_lockref.count != 1) // <<<< <=
+    //     return;
+    // dput(vtag->vdir);
+    kfree(vtag->name);
+    kfree(vtag);
 }
 
 struct branch *alloc_branch(void){ //::: use slab
@@ -35,21 +26,51 @@ struct tag_context *alloc_tag_context(void){ //::: use slab
     return kzalloc(sizeof(struct tag_context), GFP_KERNEL);
 }
 
+
+
 struct datafile *alloc_datafile(void){ //::: use slab
     return kzalloc(sizeof(struct datafile), GFP_KERNEL);
 }
 
-void put_tag(struct tag *tag){
+void put_db_tag(struct db_tag *tag){
+    kfree(tag->name);
     dput(tag->dir);
-    path_put(&tag->path);
+    fput(tag->filp);
+    put_branch(tag->last_branch);
+    path_put(&tag->path); // <<<< <=
     kfree(tag);
 }
+
 void put_datafile(struct datafile *df){
     kfree(df);
 }
 
 void put_tag_context(struct tag_context *tag_ctx){
+    // put_vtag(tag_ctx->vtag);
+    // put_db_tag(tag_ctx->db_tag);
+    fput(tag_ctx->file_tag);
+    fput(tag_ctx->file_branch);
     kfree(tag_ctx);
+}
+
+void release_branch(struct branch *branch){
+    kfree(branch->name);
+    kfree(branch);
+}
+
+void put_branch(struct branch *branch){
+    // fput(branch->filp);
+    dput(branch->dir);
+}
+
+
+
+void put_database(struct database *db){
+    kfree(db);
+}
+
+void put_dentry_list(struct dentry_list *dentry_list){
+    kfree(dentry_list);
 }
 
 bool is_branch_stale(struct branch *branch){ // <<<
@@ -65,16 +86,17 @@ void clean_stale(struct branch *branch){
 }
 
 
-int fill_tag(struct tag *tag, char *name, struct dentry *dir){
+int fill_tag(struct db_tag *tag, char *name, struct dentry *dir){
     char *buff_name, *buff_path, *full_path;
     int err;
 
     if(!tag)
         return -EINVAL;
 
+    // kref_init(&tag->refcount);
 
-    INIT_LIST_HEAD(&tag->dbs);
-    INIT_LIST_HEAD(&tag->sub_branchs);
+    // INIT_LIST_HEAD(&tag->dbs);
+    // INIT_LIST_HEAD(&tag->sub_branchs);
     
     buff_name = kzalloc(strlen(name), GFP_KERNEL);
     if(!buff_name){
@@ -106,7 +128,7 @@ int fill_tag(struct tag *tag, char *name, struct dentry *dir){
     }
     strcpy(buff_name, name);
     tag->name = buff_name;
-    tag->magic = TAG_MAGIC;
+    // tag->magic = TAG_MAGIC;
     return 0;
 }
 
@@ -135,16 +157,16 @@ int fill_datafile_from_dentry(struct datafile *df, struct dentry *d_file){
     return df;
 }
 
-struct tag *lookup_tag_by_sb(struct super_block *sb, char *name);
-struct tag *create_tag(struct super_block *sb, char *name);
-int taged_file_by_tag(struct dentry *d_file, struct tag *tag);
+struct db_tag *lookup_tag_by_sb(struct super_block *sb, char *name);
+struct db_tag *create_tag(struct super_block *sb, char *name);
+int taged_file_by_tag(struct dentry *d_file, struct db_tag *tag);
 
-int remove_datafiles(struct tag *tag, char *name){ // :::
+int remove_datafiles(struct db_tag *tag, char *name){ // :::
     return 0;
 }
 
 int taged_file(struct dentry *d_file, char *name){
-    struct tag *tag;
+    struct db_tag *tag;
     int err;
 
     tag = lookup_tag_by_sb(d_file->d_inode->i_sb, name);
@@ -154,13 +176,14 @@ int taged_file(struct dentry *d_file, char *name){
         return -ENOENT;
     
     err = taged_file_by_tag(d_file, tag);
+    put_db_tag(tag);
     return err;
 }
 
 int untaged_file(struct dentry *d_file, char *name){
     // lookup tag
     // untaged file
-    struct tag *tag;
+    struct db_tag *tag;
     int err;
 
     tag = lookup_tag_by_sb(d_file->d_inode->i_sb, name);
@@ -168,12 +191,20 @@ int untaged_file(struct dentry *d_file, char *name){
         return -ENOENT;
     
     err = remove_datafiles(tag, name);
-    put_tag(tag);
+    put_db_tag(tag);
     return err;
 }
 
 int list_add_sb(struct list_head *list, struct super_block *sb){
     struct database *database;
+    struct database *db;
+    struct super_block *sb_tmp;
+    // if(list_empty(list)){
+	// 	database = list_entry(list, struct database, t_child);
+	// 	database->sb = sb;
+	// 	return 0;
+	// }
+
 	database = kzalloc(sizeof(struct database), GFP_KERNEL);
     if(!database)
         return -ENOMEM;
@@ -181,52 +212,31 @@ int list_add_sb(struct list_head *list, struct super_block *sb){
     INIT_LIST_HEAD(&database->t_child);
     database->sb = sb;
     list_add_tail(&database->t_child, list);
+
+    db = list_entry(list->next, struct database, t_child);
+    sb_tmp = db->sb;
     return 0;
 }
 
-struct tag *lookup_tag_test(char *name){
-    // only in test, this is now only one disk.
-
-    struct path root;
-    struct super_block *sb;
-    struct tag *tag;
-
-    root = current->fs->root;
-    sb = root.dentry->d_inode->i_sb;
-
-
-    tag = lookup_tag_by_sb(sb, name);
-
-	list_add_sb(&tag->dbs, sb); 
-
-    return tag;
-    
-
-    /* todo:
-        for sb in all_sb:
-            lookup_tag_by_sb(sb, name);
-    */
-}
-
-struct datafile *lookup_datafile(struct tag *tag, char *name){
+struct datafile *lookup_datafile(struct db_tag *tag, char *name){
     return NULL;
 }
 
-struct branch *lookup_branch(struct tag *tag, unsigned long nr){
+struct branch *lookup_branch(struct db_tag *tag, unsigned long nr){
     return NULL;
 }
 
-struct tag *lookup_tag_by_sb(struct super_block *sb, char *name){ // ~~~
+struct db_tag *lookup_tag_by_sb(struct super_block *sb, char *name){ // ~~~
     struct dentry *dir_tag, *dmap, *rmap;
-    struct tag *tag;
+    struct db_tag *tag;
     int err;
 
 
-    dir_tag = db_lookup_dentry(sb->s_root, name);
+    dir_tag = db_lookup_dentry_share(sb->s_root, name);
     if(!dir_tag)
         return NULL;
     
-    tag = alloc_tag();
+    tag = alloc_db_tag();
     err = fill_tag(tag, name, dir_tag);
     if(IS_ERR(err))
         return ERR_PTR(err);
@@ -234,8 +244,8 @@ struct tag *lookup_tag_by_sb(struct super_block *sb, char *name){ // ~~~
 }
 
 
-struct tag *create_tag(struct super_block *sb, char *name){
-    struct tag *tag, *err;
+struct db_tag *create_tag(struct super_block *sb, char *name){
+    struct db_tag *tag, *err;
     struct dentry *dir_tag, *child;
 
     pr_info("start create_tag1\n");
@@ -243,32 +253,32 @@ struct tag *create_tag(struct super_block *sb, char *name){
 
     dir_tag = db_mkdir(sb->s_root, name);
     if(IS_ERR(dir_tag))
-        return (struct tag *)(dir_tag);
+        return (struct db_tag *)(dir_tag);
 
     child = db_mkdir(dir_tag, DMAP_DIR_NAME);
     if(IS_ERR(child)){
-        tag = (struct tag*)child;
+        tag = (struct db_tag*)child;
         goto out;
     }
     dput(child);
 
     child = db_mkdir(dir_tag, RMAP_DIR_NAME);
     if(IS_ERR(child)){
-        tag = (struct tag*)child;
+        tag = (struct db_tag*)child;
         goto out;
     }
 
     init_rmap(child);
 
     dput(child);
-    tag = alloc_tag();
+    tag = alloc_db_tag();
     fill_tag(tag, name, dir_tag);
 
 out:
     dput(dir_tag);
     return tag;
 }
-int db_create_datafiles(struct datafile *df, struct tag *tag){  // :::
+int db_create_datafiles(struct datafile *df, struct db_tag *tag){  // :::
     // create new file in dmap and rmap
     struct dentry *dir, *dmap, *rmap, *d_file, *dmap_file, *rmap_file;
     int err = 0;
@@ -310,7 +320,7 @@ out_err_rmap:
     return err;
 }
 
-int taged_file_by_tag(struct dentry *d_file, struct tag *tag){ // ~~~
+int taged_file_by_tag(struct dentry *d_file, struct db_tag *tag){ // ~~~
     struct datafile *datafile;
     pr_info("start taged_file_by_tag1\n");
     
@@ -326,28 +336,36 @@ int taged_file_by_tag(struct dentry *d_file, struct tag *tag){ // ~~~
 
 int fill_branch(struct branch *branch, char *name, struct dentry *dir){
     struct dentry *dentry;
+    pr_info("fill_branch: name: %s\n", name);
     pr_info("fill_branch: dir: %s\n", dir->d_name.name);
 
-    dentry = db_lookup_dentry(dir, name);
+    dentry = db_lookup_dentry_share(dir, name);
     if(!dentry)
         return -ENOENT; 
     pr_info("fill_branch: dentry: %s\n", dentry->d_name.name);
     
     branch->name = name;
     branch->dir = dentry;
+    INIT_LIST_HEAD(&branch->subdirs);
     return 0;
 }
 
 int fill_datafile(struct datafile *datafile, char *name, struct dentry *dir){
     struct dentry *dentry;
-    dentry = db_lookup_dentry(dir, name);
+    pr_info("start fill_datafile\n");
+    pr_info("fill_datafile dir: %s\n", dir->d_name.name);
+    pr_info("fill_datafile name: %s\n", name);
+    dentry = db_lookup_dentry_share(dir, name);
 
     if(!dentry)
         return -ENOENT;
 
     datafile->name = name;
-    db_read_datafile(dir, datafile);
+    db_read_datafile(dentry, datafile);
+
+    
    
+    pr_info("end fill_datafile\n");
    dput(dentry);
     return 0;
 }

@@ -1,34 +1,8 @@
+// db_fs.c
+#include <linux/xattr.h>
+
 #include "db_fs.h"
 #include "../database.h"
-
-#include <linux/xattr.h>
-#include <linux/string.h>
-
-#include <linux/debugfs.h>
-#include <linux/kernel.h>
-#include <linux/module.h>
-
-#include <linux/ftrace.h>
-#include <linux/kallsyms.h>
-#include <linux/kernel.h>
-#include <linux/linkage.h>
-#include <linux/module.h>
-#include <linux/slab.h>
-#include <linux/uaccess.h>
-#include <linux/version.h>
-#include <linux/kprobes.h>
-#include <linux/delay.h>
-#include <linux/kthread.h>
-#include <asm/signal.h>
-#include <linux/delay.h>
-#include <linux/sched.h>
-#include <linux/sched/signal.h>
-#include <linux/proc_fs.h>
-#include <linux/namei.h>
-#include <linux/slab.h>
-#include <linux/file.h>
-#include <linux/fs_struct.h>
-
 
 #define BASE_NAME_BRANCH 10
 #define COUNT_SUBFILES_NAME "security.subfiles"
@@ -61,7 +35,6 @@ int db_create(struct dentry *dentry){
 int db_rmdir(struct dentry *dentry){
     return vfs_rmdir(&init_user_ns, d_inode(dentry->d_parent), dentry);
 }
-
 
 int db_add_xattr(struct dentry *dentry, char *name, void *value){
     return vfs_setxattr(&init_user_ns, dentry, name, value, strlen(value), XATTR_CREATE);
@@ -102,6 +75,34 @@ int set_next_branch(struct dentry *dir, long nr){
     kfree(buff);
     return err;
 }
+struct dentry *db_lookup_dentry_share(struct dentry *parent, char *name){ // :::
+    struct dentry *d_target;
+    struct inode *inode;
+
+    pr_info("start db_lookup_dentry_share\n");
+    int err;
+    if(!parent){
+        return NULL;
+    }
+    
+    inode = d_inode(parent);
+    inode_lock_shared(inode);
+    // err = down_write_killable_nested(&inode->i_rwsem, I_MUTEX_PARENT);
+    // inode_lock_nested(inode, I_MUTEX_PARENT); //
+    if(err)
+        return NULL;
+
+    d_target = lookup_one(&init_user_ns, name, parent, strlen(name));
+    // inode_unlock(inode);
+
+    inode_unlock_shared(inode);
+
+    if(IS_ERR(d_target) || (d_target && !d_target->d_inode)){ // d_is_negative
+        dput(d_target);
+        return NULL;
+    }
+    return d_target;
+}
 
 
 struct dentry *db_lookup_dentry(struct dentry *parent, char *name){ // :::
@@ -113,15 +114,11 @@ struct dentry *db_lookup_dentry(struct dentry *parent, char *name){ // :::
     
     inode = d_inode(parent);
     inode_lock(inode);
+    // down_write_killable(&inode->i_rwsem);
     d_target = lookup_one(&init_user_ns, name, parent, strlen(name));
     inode_unlock(inode);
 
-    if(IS_ERR(d_target)){
-        dput(d_target);
-        return NULL;
-    }
-
-    if(d_target && !d_target->d_inode){
+    if(IS_ERR(d_target) || (d_target && !d_target->d_inode)){
         dput(d_target);
         return NULL;
     }
@@ -167,6 +164,7 @@ int db_write_datafile(struct dentry *dentry, struct datafile *df){
 
 int db_read_datafile(struct dentry *dentry, struct datafile *df){
     char *ino, *ino_parent;
+    pr_info("start db_read_datafile\n");
     ino = db_get_xattr(dentry, INO_NAME);
     if(!ino)
         return -ENOENT;
@@ -221,13 +219,11 @@ struct dentry *db_lookup_branch_dir(struct dentry *dir){
     if(IS_ERR(name))
         return (struct dentry *)name;
 
-    branch_dir = db_lookup_dentry(dir, name);
+    branch_dir = db_lookup_dentry_share(dir, name);
 
     kfree(name);
     return branch_dir;
 }
-
-
 
 int init_count_branch(struct dentry *dir){
     char *buff;
@@ -240,7 +236,6 @@ int init_count_branch(struct dentry *dir){
     
     err = db_add_xattr(dir, COUNT_SUBFILES_NAME, buff);
     kfree(buff);
-
     return err;
 }
 
@@ -339,8 +334,6 @@ struct dentry *db_create_file_rmap(struct datafile *df, struct dentry *d_rmap, s
 int db_remove_file_dmap(struct datafile *df, struct dentry *d_dmap){  // :::
     return 0;
 }
-
-
 
 int init_rmap(struct dentry *dir){
    return set_next_branch(dir, NEXT_INIT_VALUE);

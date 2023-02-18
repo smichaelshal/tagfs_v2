@@ -1,9 +1,8 @@
-all: read_dir.c
+all:
+	gcc -o user_query user_query.c
 	gcc -o read_dir read_dir.c
-# all: user_query.c
-# 	gcc -o user_query user_query.c
 
 .PHONY: clean
 
 clean:
-	-rm -f *~ *.o read_dir
+	-rm -f *~ *.o user_query read_dir

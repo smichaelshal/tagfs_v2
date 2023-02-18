@@ -1,25 +1,10 @@
-#include <linux/ftrace.h>
-#include <linux/kallsyms.h>
-#include <linux/kernel.h>
-#include <linux/linkage.h>
-#include <linux/module.h>
 #include <linux/slab.h>
-#include <linux/uaccess.h>
 #include <linux/version.h>
 #include <linux/kprobes.h>
-#include <linux/delay.h>
-#include <linux/kthread.h>
-#include <asm/signal.h>
-#include <linux/delay.h>
-#include <linux/sched.h>
-#include <linux/sched/signal.h>
 #include <linux/proc_fs.h>
 #include <linux/namei.h>
-#include <linux/slab.h>
 #include <linux/file.h>
-
 #include <linux/fs_struct.h>
-
 
 #include "hooks.h"
 #include "../utils/utils.h"

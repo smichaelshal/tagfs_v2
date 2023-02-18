@@ -1,15 +1,6 @@
-#include <linux/module.h>
-#include <linux/version.h>
-#include <linux/kernel.h>
-#include <linux/types.h>
-#include <linux/kdev_t.h>
-#include <linux/fs.h>
-#include <linux/device.h>
 #include <linux/cdev.h>
-#include <linux/slab.h>
 
 #include "api.h"
-// #include "../layout/layout.h"
 #include "../database/database.h"
 #include "../database/db_fs/db_fs.h"
 

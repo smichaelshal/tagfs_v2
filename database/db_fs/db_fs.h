@@ -10,6 +10,7 @@
 #define NEXT_INIT_VALUE 0
 
 extern struct dentry *db_lookup_dentry(struct dentry *parent, char *name);
+extern struct dentry *db_lookup_dentry_share(struct dentry *parent, char *name);
 extern struct dentry *db_mkdir(struct dentry *parent, char *name);
 // extern int db_create_datafiles(struct datafile *df, struct tag *tag);
 extern struct dentry *db_create_file_dmap(struct datafile *df, struct dentry *d_dmap);
