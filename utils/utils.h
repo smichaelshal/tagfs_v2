@@ -5,6 +5,9 @@
 #define SPLITED "/"
 #define SPLITED_LEN 1
 
+#define ROOT_TAG "/mnt/vtagfs"
+#define SYMLINK_FILENAME "sym1"
+
 extern char *_join_path_str(int count, ...);
 
 #define COUNT(...) _COUNT(__VA_ARGS__, 5, 4, 3, 2, 1)

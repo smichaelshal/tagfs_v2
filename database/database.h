@@ -15,32 +15,62 @@
 #define TAG_MAGIC 1234
 
 
-// classes ???
+struct vtag {
+    char *name;
+    struct list_head db_tags;
+    struct dentry *vdir;
+    struct kref kref;
+    // long magic;
+};
+
+struct vbranch {
+    char *name; // ?
+    unsigned long nr; // ?
+    atomic_t is_stale;
+    struct list_head dentries;
+    struct list_head child;
+    unsigned long flag;
+	struct mutex vbranch_lock;
+};
+
+struct db_tag {
+    char *name;
+    struct dentry *dir;
+    struct super_block *sb;
+
+    struct list_head child;
+
+    struct list_head vbranchs;
+	struct mutex vbranchs_lock;
+
+    unsigned long flag;
+};
 
 struct tag_context {
     struct vtag *vtag;
-    struct db_tag *db_tag;
-    // struct dentry *d_cursor;
-    struct list_head *cursor_tag;
-    struct list_head *cursor_branchs; // ??? btree or list
-    struct list_head cursor_subdirs;
-    
-    struct file *file_tag; // the file of dir of rmap. for exmaple: /mnt/vtagfs/red/rmap
-    struct file *file_branch; // the file of dir of branch in rmap. for exmaple:  /mnt/vtagfs/red/rmap/1
 
-    // struct kref refcount;
-};
+    struct file *file_tag;
+    struct file *file_branch;
 
-struct database {
-    struct list_head t_child;
-    struct super_block *sb;
+    struct db_tag *db_tag_cursor;
+    struct vbranch *vbranch_cursor;
+    struct dentry_list *dentry_cursor;
+
+    unsigned long flag;
+
+	spinlock_t vbranch_cursor_lock;
+	spinlock_t db_tag_cursor_lock;
+	spinlock_t dentry_cursor_lock;
+
+	struct mutex file_tag_lock;
+	struct mutex file_branch_lock;
 };
 
 struct dentry_list {
-    struct list_head d_child;
+    struct list_head child;
     struct dentry *dentry;
+    unsigned long flag;
 };
-
 
 struct datafile {
     char *name;
@@ -48,6 +78,17 @@ struct datafile {
     unsigned long ino_parent;
     struct super_block *sb;
 };
+
+
+// classes ???
+
+
+struct database {
+    struct list_head t_child;
+    struct super_block *sb;
+};
+
+
 
 // <<<< add count ref
 struct branch { // 16 bytes + sizeof(list_head) ?= 20~24 bytes ???
@@ -66,42 +107,6 @@ struct branch { // 16 bytes + sizeof(list_head) ?= 20~24 bytes ???
 };
 
 
-// struct tag {
-//     long magic;
-//     char *name;
-//     struct list_head sub_branchs;
-//     struct list_head dbs;
-//     struct dentry *vdir; // dir in the dcache (with ramfs)
-
-//     struct dentry *dir; // dir in the disk
-//     struct file *filp;
-//     struct branch *last_branch;
-//     struct path path; // the path of the db (on disk)
-//     // struct dentry *dmap;
-//     // struct dentry *rmap;
-// };
-
-// <<<< add count ref
-struct db_tag {
-    char *name;
-    struct dentry *dir; // dir in the disk
-    struct file *filp;
-    struct branch *last_branch;
-    struct path path; // the path of the db (on disk)
-
-    // struct kref refcount;
-};
-
-struct vbranch { // 16 bytes + sizeof(list_head) ?= 20~24 bytes ???
-    char *name;
-    unsigned long nr;
-    atomic_t is_stale;
-    struct list_head subdirs; // list of all dentries in branch
-    struct list_head child; // cursor in tag parent list
-
-    // struct list_head d_subdirs; // ???
-};
-
 struct db_branch {
     char *name;
     unsigned long nr;
@@ -111,13 +116,6 @@ struct db_branch {
 };
 
 
-struct vtag { // <<<< add count ref
-    long magic;
-    char *name;
-    struct list_head sub_branchs;
-    struct list_head dbs;
-    struct dentry *vdir; // dir in the dcache (with ramfs)
-};
 
 #include "db_fs/db_fs.h" // ::: ???
 

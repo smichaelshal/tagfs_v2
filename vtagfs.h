@@ -4,8 +4,6 @@
 #include <linux/module.h>
 #include <linux/export.h>
 
-// #define ROOT_TAG "/mnt/vtagfs"
-// #define SYMLINK_FILENAME "sym1"
 
 #define DBG_VERSION "1.4"
 #undef pr_fmt

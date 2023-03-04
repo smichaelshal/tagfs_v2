@@ -7,6 +7,7 @@ vtagfs-y := vtagfs_mod.o
 vtagfs-y +=  include/ramfs/libfs.o include/ramfs/file-mmu.o include/ramfs/inode.o
 
 vtagfs-y += publisher/publisher.o
+vtagfs-y += publisher/iget_types.o
 
 # vtagfs-y += layout/layout.o
 # vtagfs-y += layout/hardlinking/hardlinking.o
