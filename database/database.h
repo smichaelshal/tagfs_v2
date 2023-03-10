@@ -19,7 +19,7 @@ struct vtag {
     char *name;
     struct list_head db_tags;
     struct dentry *vdir;
-    struct kref kref;
+    struct kref kref; // needed ???
     // long magic;
 };
 
@@ -31,6 +31,8 @@ struct vbranch {
     struct list_head child;
     unsigned long flag;
 	struct mutex vbranch_lock;
+    struct db_tag* db_tag;
+    struct kref kref;
 };
 
 struct db_tag {
@@ -44,6 +46,7 @@ struct db_tag {
 	struct mutex vbranchs_lock;
 
     unsigned long flag;
+    struct vtag *vtag;
 };
 
 struct tag_context {
@@ -64,11 +67,15 @@ struct tag_context {
 
 	struct mutex file_tag_lock;
 	struct mutex file_branch_lock;
+
+    bool is_locked_vbranch;
 };
 
 struct dentry_list {
     struct list_head child;
     struct dentry *dentry;
+    struct vtag *vtag;
+    struct vbranch *vbranch;
     unsigned long flag;
 };
 
@@ -79,6 +86,8 @@ struct datafile {
     struct super_block *sb;
 };
 
+
+// ------------------------------------------
 
 // classes ???
 
@@ -101,7 +110,7 @@ struct branch { // 16 bytes + sizeof(list_head) ?= 20~24 bytes ???
     struct file *filp; // ???? needed
     struct dentry *dir;
 
-    // struct kref refcount;
+    struct kref kref;
     // struct path path;
     // struct list_head d_subdirs; // ???
 };
