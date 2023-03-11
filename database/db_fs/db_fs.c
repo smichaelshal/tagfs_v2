@@ -79,7 +79,6 @@ struct dentry *db_lookup_dentry_share(struct dentry *parent, char *name){ // :::
     struct dentry *d_target;
     struct inode *inode;
 
-    pr_info("start db_lookup_dentry_share\n");
     int err;
     if(!parent){
         return NULL;
@@ -125,15 +124,16 @@ struct dentry *db_lookup_dentry(struct dentry *parent, char *name){ // :::
     return d_target;
 }
 
-struct dentry *db_mkdir(struct dentry *parent, char *name){ // :::
+struct dentry *db_mkdir(struct dentry *parent, char *name){
     int err;
-    umode_t mode = DEFAULT_MODE_FILES;
+    
     struct dentry *child = d_alloc_name(parent, name);
     if(!child)
-        return ERR_PTR(-ENOMEM);
-    err = vfs_mkdir(&init_user_ns, d_inode(parent), child, mode);
-    if(err < 0)
-        return ERR_PTR(err);
+        return NULL;
+    
+    err = vfs_mkdir(&init_user_ns, d_inode(parent), child, (umode_t) DEFAULT_MODE_FILES);
+    if(IS_ERR(err))
+        return NULL;
     d_add(child, NULL); // ???
     return child;
 }

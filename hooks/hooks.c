@@ -6,6 +6,7 @@
 #include <linux/file.h>
 #include <linux/fs_struct.h>
 
+#include "../vtagfs.h"
 #include "hooks.h"
 #include "../utils/utils.h"
 
@@ -19,7 +20,7 @@
 
 #define PREFIX "::"
 #define SPLITED '/'
-static asmlinkage long fh_sys_generic(struct pt_regs *regs, asmlinkage long (*real_sys_func)(struct pt_regs *));
+static asmlinkage long fh_sys_generic(struct pt_regs *regs, asmlinkage long (*real_sys_func)(struct pt_regs *), void *reg_value);
 
 bool is_taged_file(struct file *filp){
 	char *buff;
@@ -34,7 +35,7 @@ bool is_taged_file(struct file *filp){
 	if(IS_ERR(full_path))
 		goto out;
 
-	ret = !strncmp(full_path, ROOT_TAG, strlen(ROOT_TAG));
+	ret = !strncmp(full_path, root_tag_path, strlen(root_tag_path));
 	if(ret)
 		pr_info("path1: %s\n", full_path);
 
@@ -358,7 +359,7 @@ struct inode *symlink_tag(char *tag){
 	struct inode *inode;
 	char *symlink_str;
 
-	symlink_str = join_path_str(ROOT_TAG, tag, SYMLINK_FILENAME);
+	symlink_str = join_path_str(root_tag_path, tag, SYMLINK_FILENAME);
 	if(IS_ERR(symlink_str))
 		return ERR_PTR(-ENOENT);
 
@@ -430,7 +431,11 @@ static asmlinkage long (*real_sys_getdents)(struct pt_regs *regs);
 static asmlinkage long (*real_sys_getdents64)(struct pt_regs *regs);
 static asmlinkage long (*real_sys_statx)(struct pt_regs *regs);
 static asmlinkage long (*real_sys_stat)(struct pt_regs *regs);
+// static asmlinkage long (*real_sys_stat64)(struct pt_regs *regs);
 static asmlinkage long (*real_sys_lstat)(struct pt_regs *regs);
+static asmlinkage long (*real_sys_lgetxattr)(struct pt_regs *regs);
+
+
 
 
 
@@ -438,28 +443,35 @@ static asmlinkage long (*real_sys_lstat)(struct pt_regs *regs);
 
 
 static asmlinkage long fh_sys_openat(struct pt_regs *regs){
-	return fh_sys_generic(regs, real_sys_openat);
+	return fh_sys_generic(regs, real_sys_openat, regs->si);
 }
 
 static asmlinkage long fh_sys_getdents64(struct pt_regs *regs){
-	return fh_sys_generic(regs, real_sys_getdents64);
+	return fh_sys_generic(regs, real_sys_getdents64, regs->si);
 }
 
 static asmlinkage long fh_sys_statx(struct pt_regs *regs){
-	return fh_sys_generic(regs, real_sys_statx);
+	return fh_sys_generic(regs, real_sys_statx, regs->si);
 }
 
 static asmlinkage long fh_sys_stat(struct pt_regs *regs){
-	return fh_sys_generic(regs, real_sys_stat);
+	return fh_sys_generic(regs, real_sys_stat, regs->di);
+}
+
+// static asmlinkage long fh_sys_stat64(struct pt_regs *regs){
+// 	return fh_sys_generic(regs, real_sys_stat64, regs->di);
+// }
+
+static asmlinkage long fh_sys_lgetxattr(struct pt_regs *regs){
+	return fh_sys_generic(regs, real_sys_lgetxattr, regs->di);
 }
 
 static asmlinkage long fh_sys_lstat(struct pt_regs *regs){
-	return fh_sys_generic(regs, real_sys_lstat);
+	return fh_sys_generic(regs, real_sys_lstat, regs->di);
 }
 
-
 static asmlinkage long fh_sys_getdents(struct pt_regs *regs){
-	return fh_sys_generic(regs, real_sys_getdents);
+	return fh_sys_generic(regs, real_sys_getdents, regs->si);
 }
 
 static asmlinkage long (*real_sys_close)(struct pt_regs *regs);
@@ -537,7 +549,9 @@ static asmlinkage long fh_sys_openat(int dfd, const char __user *filename,
 static struct ftrace_hook demo_hooks[] = {
 	HOOK(SYSCALL_NAME("sys_statx"), fh_sys_statx, &real_sys_statx),
 	HOOK(SYSCALL_NAME("sys_stat"), fh_sys_stat, &real_sys_stat),
+	// HOOK(SYSCALL_NAME("sys_stat64"), fh_sys_stat64, &real_sys_stat64),
 	HOOK(SYSCALL_NAME("sys_lstat"), fh_sys_lstat, &real_sys_lstat),
+	// HOOK(SYSCALL_NAME("sys_lgetxattr"), fh_sys_lgetxattr, &real_sys_lgetxattr),
 	HOOK(SYSCALL_NAME("sys_openat"), fh_sys_openat, &real_sys_openat),
 	HOOK(SYSCALL_NAME("sys_getdents"), fh_sys_getdents, &real_sys_getdents),
 	HOOK(SYSCALL_NAME("sys_getdents64"), fh_sys_getdents64, &real_sys_getdents64),
@@ -571,7 +585,7 @@ void close_hooks(void)
 
 }
 // wrapper
-static asmlinkage long fh_sys_generic(struct pt_regs *regs, asmlinkage long (*real_sys_func)(struct pt_regs *)) // <<<
+static asmlinkage long fh_sys_generic(struct pt_regs *regs, asmlinkage long (*real_sys_func)(struct pt_regs *), void *reg_value) // <<<
 {
 	
 	long ret;
@@ -580,7 +594,7 @@ static asmlinkage long fh_sys_generic(struct pt_regs *regs, asmlinkage long (*re
 	char *tag_name;
 	struct dentry *dentry;
 
-	kernel_filename = duplicate_filename((void*) regs->si);
+	kernel_filename = duplicate_filename((void *)reg_value);//regs->si
 
 	if (strncmp(kernel_filename, PREFIX, strlen(PREFIX)) == 0)
 	{

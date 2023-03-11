@@ -25,7 +25,7 @@ struct ramfs_fs_info {
 #define RAMFS_DEFAULT_MODE 0755
 
 static const struct super_operations ramfs_ops;
-static const struct inode_operations root_tag_dir_inode_operations;
+static const struct inode_operations root_tag_path_dir_inode_operations;
 
 
 
@@ -62,7 +62,7 @@ struct inode *ramfs_get_inode(struct super_block *sb,
 			inode->i_fop = &ramfs_file_operations;
 			break;
 		case S_IFDIR:
-			inode->i_op = &root_tag_dir_inode_operations;
+			inode->i_op = &root_tag_path_dir_inode_operations;
 			inode->i_fop = &simple_dir_operations; // <<<
 
 			/* directory inodes start off with i_nlink == 2 (for "." entry) */
@@ -145,9 +145,9 @@ static int ramfs_tmpfile(struct user_namespace *mnt_userns,
 	return 0;
 }
 
-static const struct inode_operations root_tag_dir_inode_operations = {
+static const struct inode_operations root_tag_path_dir_inode_operations = {
 	.create		= ramfs_create,
-	.lookup		= lookup_tagfs, // simple_lookup <<
+	.lookup		= lookup_tag, // simple_lookup <<
 	.link		= simple_link,
 	.unlink		= simple_unlink, // <<<
 	.symlink	= ramfs_symlink, // <<<?

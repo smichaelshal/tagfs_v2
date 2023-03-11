@@ -15,6 +15,13 @@
 #include "hooks/hooks.h"
 #include "api/api.h"
 
+// #define root_tag_path 
+
+extern char *root_tag_path;
+// module_param(root_tag_path, charp ,0660);
+
+
+
 
 
 MODULE_LICENSE("GPL");

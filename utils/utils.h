@@ -5,7 +5,6 @@
 #define SPLITED "/"
 #define SPLITED_LEN 1
 
-#define ROOT_TAG "/mnt/vtagfs"
 #define SYMLINK_FILENAME "sym1"
 
 extern char *_join_path_str(int count, ...);
@@ -14,6 +13,7 @@ extern char *_join_path_str(int count, ...);
 #define _COUNT(a, b, c, d, e, count, ...) count
 #define join_path_str(...) _join_path_str(COUNT(__VA_ARGS__), __VA_ARGS__)
 
+extern char *dup_name(const char *name);
 
 
 #endif /* UTILS_H_ */

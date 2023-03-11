@@ -1,0 +1,39 @@
+const struct dentry_operations tag_dentry_operations = { // <<<
+void release_vbranch_kref(struct kref *kref){ // <<<
+bool is_vbranch_stale(struct vbranch *vbranch){ // <<<
+vdir = create_vdir(dentry->dname.name); // <<<
+struct dentry *get_root_vdir(void){  // <<<
+bool is_taged_mount(struct vfsmount *mnt){ // <<<
+struct dentry *lookup_tag_by_mount(struct vfsmount *mnt, char *name){ // <<<
+struct db_tag *create_db_tag(struct dentry *dir){ // <<<
+delete_db_tag_cursor(cursor); // <<<
+struct datafile *lookup_datafile_in_db(struct db_tag *db_tag, char *name){ // <<<
+int release_tag_context(struct tag_context *tag_ctx){ // <<<
+if(is_vbranch_in_end(cursor)) // <<<
+bool lock_vbranch(struct vbranch *vbranch, spinlock_t *lock, bool *is_locked_vbranch){ // <<< 
+delete_dentry_cursor(cursor); // <<<
+int unlock_vbranch(struct vbranch *vbranch, struct dentry_list *last){ // <<<
+bool is_branch_loaded(struct vbranch *vbranch){ // <<<
+struct vbranch *slow_lookup_vbranch(struct tag_context *tag_ctx, struct db_tag *db_tag, struct vbranch *vbranch){ // <<<
+move_vbranch_cursor(tag_ctx->vbranch_cursor, &db_tag->vbranchs); // <<<
+if(is_vbranch_stale(vbranch)) // <<<
+struct vbranch *load_vbranch(struct tag_context *tag_ctx, struct vbranch *vbranch){ // <<<
+tag_ctx->file_branch = open_file_branch(tag_ctx, vbranch); // <<<
+struct file *open_file_tag(struct tag_context *tag_ctx, struct db_tag *db_tag){  // <<<
+rmap = lookup_rmap(db_tag->dir); // <<<
+filp = open_file_dentry(rmap, O_RDONLY | O_DIRECTORY); // <<<
+loff_t pos, u64 ino, unsigned int d_type){  // <<<
+load_base_vbranch(getdents_tag->db_tag, name); // <<<
+struct dentry *dentry = get_dentry_by_ino(sb, ino); // <<<
+err = db_read_datafile(dentry, datafile); // <<<
+loff_t pos, u64 ino, unsigned int d_type){  // <<<
+int drop_vbranch(struct vbranch *vbranch){ // <<<
+if(is_vbranch_lock(vbranch)) // <<<
+// shrink_vbranch(vbranch); // <<< ???
+delete_dentry_list(dentry_list); // <<<
+delete_vbranch(vbranch); // <<<
+void release_vbranch(struct vbranch *vbranch){  // <<<
+delete_db_tag(db_tag); // <<<
+if(is_vtag_empty(vtag)) // <<<
+void release_vtag(struct vtag *vtag){ // <<<
+free_vtag(vtag); // <<<

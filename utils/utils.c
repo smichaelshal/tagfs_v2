@@ -43,3 +43,17 @@ out_error:
 	kfree(path);
 	return ERR_PTR(err);
 }
+
+
+char *dup_name(const char *name){
+    /*
+    * alloc new buffer and copy to buffer the name.
+    * if success return buffer with the name, else return NULL.
+    */
+
+    char *new_name = kzalloc(strlen(name), GFP_KERNEL);
+    if(new_name)
+        strcpy(new_name, name);
+    return new_name;
+}
+

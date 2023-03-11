@@ -6,6 +6,8 @@
 #include <linux/namei.h>
 #include <linux/slab.h>
 #include <linux/file.h>
+#include <linux/kref.h>
+
 
 #define MAX_FILE_BRANCH 4096
 
@@ -47,6 +49,8 @@ struct db_tag {
 
     unsigned long flag;
     struct vtag *vtag;
+
+    struct path path; // delete
 };
 
 struct tag_context {
@@ -133,36 +137,35 @@ extern int taged_file(struct dentry *d_file, char *name);
 extern int untaged_file(struct dentry *d_file, char *name);
 
 // extern struct tag *lookup_tag_test(char *name);
-extern struct datafile *lookup_datafile(struct db_tag *tag, char *name);
-extern struct branch *lookup_branch(struct db_tag *tag, unsigned long nr);
+// extern struct datafile *lookup_datafile(struct db_tag *tag, char *name);
+// extern struct branch *lookup_branch(struct db_tag *tag, unsigned long nr);
 
-extern struct branch *alloc_branch(void);
-extern struct vtag *alloc_vtag(void); // :::
-extern struct db_tag *alloc_db_tag(void); // :::
-extern struct datafile *alloc_datafile(void);
-extern struct tag_context *alloc_tag_context(void);
+// extern struct vtag *alloc_vtag(void); // :::
+// extern struct db_tag *alloc_db_tag(void); // :::
+// extern struct datafile *alloc_datafile(void);
+// extern struct tag_context *alloc_tag_context(void);
 
-extern void put_branch(struct branch *branch);
-extern void put_db_tag(struct db_tag *db_tag);
-extern void put_vtag(struct vtag *vtag);
-extern void put_datafile(struct datafile *datafile);
-extern void put_tag_context(struct tag_context *tag_ctx);
-extern void put_database(struct database *db);
-extern void put_dentry_list(struct dentry_list *dentry_list);
-
+// extern void put_branch(struct branch *branch);
+// extern void put_db_tag(struct db_tag *db_tag);
+// extern void put_vtag(struct vtag *vtag);
+// extern void put_datafile(struct datafile *datafile);
+// extern void put_tag_context(struct tag_context *tag_ctx);
+// extern void put_database(struct database *db);
+// extern void put_dentry_list(struct dentry_list *dentry_list);
 
 
 
-extern int fill_tag(struct db_tag *tag, char *name, struct dentry *dir);
-extern int fill_branch(struct branch *branch, char *name, struct dentry *dir);
-extern int fill_datafile(struct datafile *datafile, char *name, struct dentry *dir);
+
+// extern int fill_tag(struct db_tag *tag, char *name, struct dentry *dir);
+// extern int fill_branch(struct branch *branch, char *name, struct dentry *dir);
+// extern int fill_datafile(struct datafile *datafile, char *name, struct dentry *dir);
 
 
-extern void make_stale(struct branch *branch);
-extern void clean_stale(struct branch *branch);
-extern bool is_branch_stale(struct branch *branch);
+// extern bool is_branch_stale(struct branch *branch);
 
-extern int list_add_sb(struct list_head *list, struct super_block *sb);
-extern struct db_tag *lookup_tag_by_sb(struct super_block *sb, char *name);
+// extern int list_add_sb(struct list_head *list, struct super_block *sb);
+// extern struct db_tag *lookup_tag_by_sb(struct super_block *sb, char *name);
+
+// extern struct vbranch *add_vbranch(struct list_head *list, struct vbranch *vbranch);
 
 #endif /* DATABASE_H_ */

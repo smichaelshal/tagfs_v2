@@ -1,0 +1,103 @@
+
+// int release_vtag(struct vtag *vtag){ // <<<
+//     /*
+//     * release all db_tags, vdir.
+//     *
+//     * return 0 is sucess, else return non-zero
+//     *
+//     * The order of the release is from the smallest to the largest,
+//     * i.e. first the dentries and finally the vdir.
+//     */
+
+//     int err;
+//     struct db_tag *cursor, *current_db_tag;
+
+//     cursor = add_db_tag_cursor(&vtag->db_tags);
+//     if(!cursor)
+//         return -ENOMEM;
+    
+//     current_db_tag = cursor;
+
+//     while(1){
+//         current_db_tag = get_current_update_db_tag(cursor, &vtag->db_tags, NULL);
+//         if(!current_db_tag)
+//             break;
+
+//         err = release_db_tag(db_tag);
+//         if(err){
+//             delete_db_tag_cursor(cursor);
+//             return err;
+//         }
+//     }
+//     delete_db_tag_cursor(cursor);
+
+//     release_vdir(vdir); // <<<
+//     kfree(vtag->name);
+//     kfree(vtag);
+//     return 0;
+// }
+
+// int release_db_tag(struct db_tag *db_tag){ // <<<
+//     /*
+//     * release all vbranchs, dir.
+//     */
+
+//     int err;
+//     struct vbranch *cursor, *current_vbranch;
+
+//     cursor = add_vbranch_cursor(&db_tag->vbranchs);
+//     if(!cursor)
+//         return -ENOMEM;
+
+//     current_vbranch = cursor;
+
+//     while(1){
+//         current_vbranch = get_current_update_vbranch(cursor, &db_tag->vbranchs, NULL);
+//         if(!current_vbranch)
+//             break;
+
+//         err = release_vbranch(vbranch);
+//         if(err){
+//             delete_vbranch_cursor(cursor);
+//             return err;
+//         }
+//     }
+//     delete_vbranch_cursor(cursor); // <<<
+
+//     kfree(db_tag->name);
+//     dput(db_tag->dir);
+//     return 0;
+// }
+
+// int release_vbranch(struct vbranch *vbranch){ // <<<
+//     /*
+//     * release all dentries.
+//     */
+
+//     int err;
+//     struct dentry_list *cursor, *current_dentry;
+
+//     cursor = add_dentry_cursor(&vbranch->dentries);
+//     if(!cursor)
+//         return -ENOMEM;
+
+//     current_dentry = cursor;
+
+//     while(1){
+//         current_dentry = get_current_update_vbranch(cursor, &vbranch->dentries, NULL);
+//         if(!current_dentry)
+//             break;
+
+//         err = release_dentry_list(current_dentry); // <<<
+//         if(err){
+//             delete_dentry_cursor(cursor);
+//             return err;
+//         }
+//     }
+//     delete_dentry_cursor(cursor);
+
+//     kfree(vbranch->name);
+//     return 0;
+// }
+
+ctx->pos++;

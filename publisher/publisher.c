@@ -39,20 +39,24 @@
 // relsease called when the object is empty. (natural way)
 // drop try empty the object. (deliberate way)
 
-#define NR_BRANCH_READ_AHEAD 16
-
-#define SKIP_MODE 1
-#define LAST_LOCKING 2 // ???
-
-#define CURSOR_MODE 1
-#define INIT_MODE 2
-#define DEAD_MODE 4
-
-
 #include <linux/fs_struct.h>
 #include "publisher.h"
+#include "list_utils.h"
 #include "../utils/utils.h"
 #include "../database/database.h"
+#include "../vtagfs.h"
+
+
+#include <linux/magic.h>
+
+
+
+
+#define NR_BRANCH_READ_AHEAD 16
+
+void put_vbranch(struct vbranch *vbranch, struct tag_context *tag_ctx);
+
+
 
 struct getdents_callback_tag {
 	struct dir_context ctx;
@@ -71,16 +75,29 @@ struct getdents_callback_branch {
     struct dentry *dir;
 };
 
+struct dentry *lookup_tag(struct inode *dir, struct dentry *dentry, unsigned int flags);
+struct dentry *lookup_file(struct inode *dir, struct dentry *dentry, unsigned int flags);
+
+int tag_readdir(struct file *file, struct dir_context *ctx);
+int tag_dir_open(struct inode *inode, struct file *file);
+int tag_dir_close(struct inode *inode, struct file *file);
+
+const struct dentry_operations file_dentry_operations;
+const struct inode_operations tag_dir_inode_operations;
+
+int release_tag_context(struct tag_context *tag_ctx);
+void release_db_tag(struct db_tag *db_tag);
+void release_vtag(struct vtag *vtag);
+
 const struct dentry_operations tag_dentry_operations = { // <<<
     // .d_revalidate // check if there are new db_tags ???
 };
 
-const struct dentry_operations file_dentry_operations = {
-    .d_release = dentry_file_release,
-    .d_revalidate = dentry_file_revalidate,
-};
+static inline unsigned char dt_type(struct inode *inode) { // from libfs
+	return (inode->i_mode >> 12) & 15;
+}
 
-struct datafile *alloc_datafile(void){
+struct datafile *alloc_datafile(void){ // database.c
     return kzalloc(sizeof(struct datafile), GFP_KERNEL);
 }
 
@@ -90,6 +107,9 @@ struct dentry_list *alloc_dentry_list(void){
 
 struct vbranch *alloc_vbranch(void){
     return kzalloc(sizeof(struct vbranch), GFP_KERNEL);
+}
+struct db_tag *alloc_db_tag(void){
+    return kzalloc(sizeof(struct db_tag), GFP_KERNEL);
 }
 
 struct vtag *alloc_vtag(void){
@@ -116,87 +136,241 @@ void clean_stale(struct vbranch *vbranch){
 	atomic_set(&vbranch->is_stale, 0);
 }
 
-struct dentry *lookup_tag(struct inode *dir, struct dentry *dentry, unsigned int flags){
+struct dentry_list *init_dentry_list(struct dentry *dentry, struct vtag *vtag, struct vbranch *vbranch){
     /*
-    * Create vtag and vdir.
-    * return vdir (dentry) if success else return NULL
-    *
-    * The function always returns vdir
-    * if there is a problem not of the module such as a resource problem
-    * (for example there is not enough memory)
-    *
-    * If the function is called then the tag is probably not in the cache
+    * alloc and fill dentry_list
     */
 
-    struct vtag *vtag;
-    struct dentry *vdir;
+    struct dentry_list *dentry_list = alloc_dentry_list();
+    if(!dentry_list)
+        return NULL;
 
-    vtag = create_vtag(dentry->dname.name);
-    vdir = create_vdir(dentry->dname.name); // <<<
-    return vdir;
+    INIT_LIST_HEAD(&dentry_list->child);
+    dentry_list->flag = 0;
+    dentry_list->vtag = vtag;
+    dentry_list->dentry = dentry;
+    if(vbranch)
+        dentry_list->vbranch = vbranch;
+    else
+        dentry_list->vbranch = NULL;
+
+    return dentry_list;
 }
 
-struct vtag *create_vtag(char *name){
+struct db_tag *init_db_tag(struct dentry *dir, struct vtag *vtag, char *name){
     /*
-    * Create vtag and fill relevant data
-    * return vtag, if error return NULL
+    * Get the dir (on disk) of tag
+    * return db_tag of this dir if success, else return NULL
+    */
+    
+    struct db_tag *db_tag = alloc_db_tag();
+    if(!db_tag)
+        return NULL;
+
+    db_tag->name = dup_name(name);
+    if(!db_tag->name){
+        kfree(db_tag);
+        return NULL;
+    }
+
+    db_tag->dir = dir;
+    db_tag->sb = dir->d_sb; // <<< change to virtual tag disk
+
+    INIT_LIST_HEAD(&db_tag->child);
+    INIT_LIST_HEAD(&db_tag->vbranchs);
+    mutex_init(&db_tag->vbranchs_lock);
+    db_tag->vtag = vtag;
+    db_tag->flag = 0;
+
+    return db_tag;
+    
+}
+
+
+struct tag_context *init_tag_context(struct vtag *vtag){
+    /*
+    * Create initialized tag_context
+    * return tag_context if success, else return NULL
     */
 
-    vtag = init_vtag(name);
-    lookup_db_tags(vtag);
-    return vtag;
+    struct tag_context *tag_ctx;
+    tag_ctx = alloc_tag_context();
+    if(!tag_ctx)
+        return NULL;
+
+    tag_ctx->vtag = vtag;
+
+    tag_ctx->file_tag = NULL;
+    tag_ctx->file_branch = NULL;
+
+    tag_ctx->db_tag_cursor = NULL;
+    tag_ctx->vbranch_cursor = NULL;
+    tag_ctx->dentry_cursor = NULL;
+
+    tag_ctx->flag = 0;
+
+	spin_lock_init(&tag_ctx->vbranch_cursor_lock); // ??? needed
+	spin_lock_init(&tag_ctx->db_tag_cursor_lock);
+	spin_lock_init(&tag_ctx->dentry_cursor_lock);
+
+	mutex_init(&tag_ctx->file_tag_lock);
+	mutex_init(&tag_ctx->file_branch_lock); // ??? needed
+
+    tag_ctx->is_locked_vbranch = false;
+
+    return tag_ctx;
 }
 
-struct dentry *get_root_vdir(void){  // <<<
+bool is_vbranch_lock(struct vbranch *vbranch){
+    return !!kref_read(&vbranch->kref);
+}
+
+int tag_dir_open(struct inode *inode, struct file *file){
     /*
-    * return the parent of vdir, if success return dentry, else return NULL.
-    * todo: public variable to root dir.
+    * Create and add tag_context to file
+    * return 0 if success, else retrun non-zero
+    */
+   struct tag_context *tag_ctx;
+    tag_ctx = init_tag_context(inode->i_private);
+    if(!tag_ctx)
+        return -ENOMEM;
+    file->private_data = tag_ctx;
+    return 0;
+}
+
+int tag_dir_close(struct inode *inode, struct file *file){
+    /*
+    * release tag context and disconnet tag_context from file
+    * return 0
+    */
+    
+    release_tag_context(file->private_data);
+    file->private_data = NULL;
+    return 0;
+}
+
+
+void init_vbranch(struct vbranch *vbranch, struct db_tag *db_tag, char *name){
+    vbranch->name = name;
+    vbranch->flag = INIT_MODE;
+    vbranch->db_tag = db_tag;
+
+    INIT_LIST_HEAD(&vbranch->dentries);
+    INIT_LIST_HEAD(&vbranch->child);
+    clean_stale(vbranch);
+    mutex_init(&vbranch->vbranch_lock);
+    kref_init(&vbranch->kref);
+
+    /*
+    * add_vbranch() must to be last, becuse after this line,
+    * the vbranch exposed in public.
+    */
+    add_vbranch(&db_tag->vbranchs, vbranch);
+}
+
+
+bool is_branch_loaded(struct vbranch *vbranch){ // <<<
+    /*
+    * return true if the branch alredy loaded to cache, else return false
+    */
+
+    return !(vbranch->flag & INIT_MODE) && !is_vbranch_stale(vbranch);
+}
+
+int fill_datafile(struct datafile *datafile, struct dentry *dentry, struct super_block *sb){
+    // move to database.c
+
+    /*
+    * @datafile: empty datafile
+    * @dentry: dentry of db file
+    * @sb: sb of real file
+    *
+    * fill the datafile from data in disk
+    * return 0 if success, else return non-zero
+    */
+
+    int err;
+
+    datafile->name = dup_name(dentry->d_name.name);
+    if(!datafile->name)
+        return -ENOMEM;
+    
+    err = db_read_datafile(dentry, datafile);
+    if(err){
+        kfree(datafile->name);
+        return err;
+    }
+
+    datafile->sb = sb;
+    return 0;
+}
+
+
+struct datafile *init_datafile(struct dentry *dentry, struct super_block *sb){
+    /*
+    * get dentry of db file, sb of real file
+    *
+    * alloc and fill datafile.
+    * read the ino, ino_parent of real file from db.
+    * return datafile if success, else return NULL
+    */
+
+    int err;
+    struct datafile *datafile = alloc_datafile();
+
+    if(!datafile)
+        return NULL;
+
+    err = fill_datafile(datafile, dentry, sb);
+    if(err){
+        kfree(datafile);
+        return NULL;
+    }
+    return datafile;
+}
+
+struct dentry *lookup_rmap(struct dentry *dentry){
+    // move database.c ?
+    /*
+    * get dentry of dir tag (on disk).
+    *
+    * return dentry of rmap (on disk) if success,
+    * else return NULL.
+    */
+    
+    return db_lookup_dentry_share(dentry, RMAP_DIR_NAME);
+}
+
+struct file *open_file_dentry(struct dentry *dentry, umode_t mode){
+    /*
+    * open file of dentry.
+    * return file if success, else return NULL.
     */
 
     struct path path;
-    struct dentry *dentry;
+    struct file *filp = NULL;
+    char *buff_path, *full_path;
     int err;
 
-    err = kern_path(ROOT_TAG, 0, &path);
-    if(err)
+
+    buff_path = kzalloc(PATH_MAX, GFP_KERNEL);
+    if(!buff_path)
         return NULL;
     
-    dentry = dget(path.dentry);
-    path_put(&path);
-    return dentry;
-}
-
-struct dentry *create_vdir(char *name){
-    /*
-    * alloc and fill vdir (dentry of vtag)
-    * return dentry of vdir if success, else return NULL.
-    */
-
-    struct dentry *parent, *dentry;
-    struct inode *inode_parent;
-    int err;
-
-    parent = get_root_vdir();
-    if(!parent)
-        return NULL;
-
-    dentry = d_alloc_name(parent, name);
-    if(!dentry)
+    full_path = dentry_path_raw(dentry, buff_path, PATH_MAX);
+    if(IS_ERR(full_path))
         goto out;
     
-    d_set_d_op(dentry, &tag_dentry_operations);
-	d_add(dentry, NULL); // ???
+    err = kern_path(full_path, 0, &path);
+    if(IS_ERR(err))
+        goto out;
 
-    inode_parent = parent->d_inode;
-    err = inode_parent->i_op->mkdir(&init_user_ns, inode_parent, dentry, DEFAULT_MODE_FILES);
-    if(err)
-        dentry = NULL;
-
-    inode->i_fop = &tag_dir_operations; // <<<
+    filp = dentry_open(&path, mode, current_cred());
+    path_put(&path);
 
 out:
-    dput(parent);
-    return dentry;
+    kfree(buff_path);
+    return filp;
 }
 
 struct vtag *init_vtag(char *name){
@@ -216,16 +390,286 @@ struct vtag *init_vtag(char *name){
     return vtag;
 }
 
-char *dup_name(char *name){ // utils.c
+
+int release_tag_context(struct tag_context *tag_ctx){
     /*
-    * alloc new buffer and copy to buffer the name.
-    * if success return buffer with the name, else return NULL.
+    * release tag_context
+    * return 0 if success else return non-zero
     */
 
-    char *new_name = kzalloc(strlen(name), GFP_KERNEL);
-    if(new_name)
-        strcpy(new_name, name);
-    return new_name;
+    if(tag_ctx->file_tag)
+        fput(tag_ctx->file_tag);
+    
+    if(tag_ctx->file_branch)
+        fput(tag_ctx->file_branch);
+
+    if(tag_ctx->db_tag_cursor)
+        delete_db_tag(tag_ctx->db_tag_cursor);
+    
+    if(tag_ctx->vbranch_cursor){
+        // put_vbranch(vbranch, tag_ctx); // ???
+        delete_vbranch(tag_ctx->vbranch_cursor);
+    }
+    
+    if(tag_ctx->dentry_cursor)
+        delete_dentry_list(tag_ctx->dentry_cursor);
+    
+    kfree(tag_ctx);
+
+    return 0;
+}
+
+void free_datafile(struct datafile *datafile){
+    /*
+    * free datafile and resources.
+    */
+    kfree(datafile->name);
+    kfree(datafile);
+}
+
+int dentry_file_revalidate(struct dentry *dentry, unsigned int flags){
+    /*
+    * check if vbranch of this dentry is stale
+    */
+    struct dentry_list *dentry_list = dentry->d_fsdata;
+    if(dentry_list &&  dentry_list->vbranch)
+        return !is_vbranch_stale(dentry_list->vbranch);
+    return 1; // always valid, change ???
+}
+
+void free_dentry_list(struct dentry_list *dentry_list){
+    /*
+    * delete the dentry_list from dentries list, and free dentry_list.
+    */
+
+    delete_dentry_list(dentry_list);
+    kfree(dentry_list);
+}
+
+void dentry_file_release(struct dentry *dentry){
+    /*
+    * d_release of regular files in vdir
+    * make stale
+    * if the dentry is the last in vbranch, release vbranch
+    */
+
+    struct dentry_list *dentry_list;
+    struct vbranch *vbranch;
+
+    dentry_list = dentry->d_fsdata;
+    if(!dentry_list)
+        return;
+    
+    vbranch = dentry_list->vbranch;
+
+    if(vbranch && !is_vbranch_stale(vbranch))
+        make_stale(vbranch);
+
+    free_dentry_list(dentry_list);
+
+    if(vbranch && is_vbranch_empty(vbranch)){
+        vbranch->flag = INIT_MODE;
+        clean_stale(vbranch);
+    }
+}
+
+void free_vbranch(struct vbranch *vbranch){
+    /*
+    * delete the vbranch from vbranchs list, and free vbranch.
+    */
+    delete_vbranch(vbranch);
+    kfree(vbranch->name);
+    kfree(vbranch);
+}
+
+void release_vbranch(struct vbranch *vbranch){  // <<<
+    /*
+    * Releases the branch and
+    * tries to release the db_tag if it can (when db_tag empty)
+    */
+
+    struct db_tag *db_tag = vbranch->db_tag;
+    free_vbranch(vbranch);
+    if(is_db_tag_empty(db_tag))
+        release_db_tag(db_tag);
+}
+
+void free_db_tag(struct db_tag *db_tag){
+    /*
+    * delete the db_tag from db_tags list, and free db_tag.
+    */
+
+    delete_db_tag(db_tag);
+    kfree(db_tag->name);
+    kfree(db_tag);
+}
+
+void release_db_tag(struct db_tag *db_tag){
+    /*
+    * Releases the db_tag and
+    * tries to release the vtag if it can (when vtag empty)
+    */
+
+    struct vtag *vtag = db_tag->vtag;
+    free_db_tag(db_tag);
+    if(is_vtag_empty(vtag))
+        release_vtag(vtag);
+}
+
+void free_vtag(struct vtag *vtag){
+    kfree(vtag->name);
+    kfree(vtag);
+}
+
+void release_vtag(struct vtag *vtag){ // <<<
+    /*
+    * Releases the vtag and all the resources of vtag (vdir)
+    */
+    if(vtag->vdir)
+        dput(vtag->vdir); // ??? try delete vdir
+    free_vtag(vtag);
+}
+
+void make_dead_vbranch(struct vbranch *vbranch){
+    struct dentry_list *cursor, *current_dentry_list;
+
+    if(is_vbranch_lock(vbranch)){
+        release_vbranch(vbranch);
+        return;
+    }
+
+    cursor = add_dentry_cursor(&vbranch->dentries);
+    if(!cursor)
+        return; // error ??? must success !!! (the vbranch remains alive)
+
+    while(1){
+        current_dentry_list = get_current_update_dentry(cursor, &vbranch->dentries, NULL); // ??? lock
+        if(!current_dentry_list)
+            break;
+        current_dentry_list->flag |= DEAD_MODE;
+    }
+    delete_dentry_list(cursor);
+    
+}
+
+void umount_db_tag(struct db_tag *db_tag){
+    struct vbranch *cursor, *current_vbranch;
+
+    db_tag->flag |= DEAD_MODE;
+
+    shrink_dcache_sb(db_tag->sb);
+
+    cursor = add_vbranch_cursor(&db_tag->vbranchs);
+    if(!cursor)
+        return;
+
+    while(1){
+        current_vbranch = get_current_update_vbranch(cursor, &db_tag->vbranchs, NULL); // ??? lock
+        if(!current_vbranch)
+            break;
+        make_dead_vbranch(current_vbranch);
+    }
+    delete_vbranch(cursor);
+}
+
+void unload_vtagfs(void){ // <<<
+    /*
+    * when the module unload (uninstall)
+    * must kill all structs and objects. !!!
+    */
+}
+
+
+
+
+struct dentry *get_root_vdir(void){  // <<<
+    /*
+    * return the parent of vdir, if success return dentry, else return NULL.
+    * todo: public variable to root dir.
+    */
+
+    struct path path;
+    struct dentry *dentry;
+    int err;
+
+    err = kern_path(root_tag_path, 0, &path);
+    if(err)
+        return NULL;
+    
+    dentry = dget(path.dentry);
+    path_put(&path);
+    return dentry;
+}
+
+struct dentry *create_vdir(char *name){
+    /*
+    * alloc and fill vdir (dentry of vtag)
+    * return dentry of vdir if success, else return NULL.
+    */
+    struct dentry *parent, *dentry;
+    struct inode *inode_parent, *inode;
+    int err;
+
+    parent = get_root_vdir();
+    if(!parent)
+        return NULL;
+
+    dentry = d_alloc_name(parent, name);
+    if(!dentry)
+        goto out;
+    
+    // d_set_d_op(dentry, &tag_dentry_operations); // todo: active this line
+	d_add(dentry, NULL); // ???
+
+    inode_parent = parent->d_inode;
+    err = inode_parent->i_op->mkdir(&init_user_ns, inode_parent, dentry, DEFAULT_MODE_FILES);
+    if(err){
+        dput(dentry);
+        dentry = NULL;
+        goto out;
+    }
+    dget(dentry); // pin vdir // ???
+
+    inode = dentry->d_inode;
+    // inode->i_fop = &tag_dir_operations; // <<<
+    inode->i_op = &tag_dir_inode_operations;
+out:
+    dput(parent);
+    return dentry;
+}
+
+struct dentry *lookup_tag_by_mount(struct vfsmount *mnt, char *name){
+    /*
+    * Lookup in this mount the dir of tag
+    * return dir (dentry) if found, else return NULL
+    */
+
+    if(!mnt->mnt_root)
+        return NULL;
+
+    return db_lookup_dentry_share(mnt->mnt_root, name); // <<<
+}
+
+bool is_taged_mount(struct vfsmount *mnt){ // <<<
+    /*
+    * return true if the mount contain taged files, else return false
+    * now this is temporery way.
+    * todo: check with xattr
+    */
+
+    if(mnt && mnt->mnt_sb){
+        switch (mnt->mnt_sb->s_magic) {
+            case EXT4_SUPER_MAGIC:
+                return true;
+            // case RAMFS_MAGIC:
+            //     return true;
+            // case TMPFS_MAGIC:
+            //     return true;
+            // case PROC_SUPER_MAGIC:
+            //     return true;
+        }
+    }
+    return false;
 }
 
 int scan_mounts(struct vfsmount *mnt, void *arg){
@@ -242,7 +686,7 @@ int scan_mounts(struct vfsmount *mnt, void *arg){
     if(is_taged_mount(mnt))
         dir = lookup_tag_by_mount(mnt, vtag->name);
         if(dir)
-            db_tag = init_db_tag(dir, vtag);
+            db_tag = init_db_tag(dir, vtag, vtag->name);
             if(db_tag)
                 add_db_tag(&vtag->db_tags, db_tag);
     return 0;
@@ -262,126 +706,60 @@ int lookup_db_tags(struct vtag *vtag){
     return 0;
 }
 
-bool is_taged_mount(struct vfsmount *mnt){ // <<<
+
+
+struct vtag *create_vtag(char *name){
     /*
-    * return true if the mount contain taged files, else return false
-    * now this is temporery way.
-    * todo: check with xattr
+    * Create vtag and fill relevant data
+    * return vtag, if error return NULL
     */
 
-    if(mnt && mnt->mnt_sb){
-        switch (mnt->mnt_sb->s_magic) {
-            case EXT4_SUPER_MAGIC:
-                return true;
-            case RAMFS_MAGIC:
-                return true;
-            case TMPFS_MAGIC:
-                return true;
-            case PROC_SUPER_MAGIC:
-                return true;
-        }
-    }
-    return false;
+    struct vtag *vtag = init_vtag(name);
+    lookup_db_tags(vtag);
+    return vtag;
 }
 
-struct dentry *lookup_tag_by_mount(struct vfsmount *mnt, char *name){
+struct dentry *lookup_tag(struct inode *dir, struct dentry *dentry, unsigned int flags){
     /*
-    * Lookup in this mount the dir of tag
-    * return dir (dentry) if found, else return NULL
-    */
-
-    struct dentry *root, *dentry;
-
-    root = mnt->mnt_root;
-    if(!root)
-        return NULL;
-
-    return db_lookup_dentry_share(root, name); // <<<
-}
-
-struct db_tag *init_db_tag(struct dentry *dir, struct vtag *vtag){
-    /*
-    * Get the dir (on disk) of tag
-    * return db_tag of this dir if success, else return NULL
-    */
-    
-    struct db_tag *db_tag = alloc_db_tag();
-    if(!db_tag)
-        return NULL;
-
-    db_tag->name = dup_name(dir->d_name.name);
-    if(!db_tag->name){
-        kfree(db_tag);
-        return NULL;
-    }
-
-    db_tag->dir = dir;
-    db_tag->sb = sb; // <<< change to virtual tag disk
-
-    INIT_LIST_HEAD(&db_tag->child);
-    INIT_LIST_HEAD(&db_tag->vbranchs);
-    mutex_init(&db_tag->vbranchs_lock);
-    db_tag->vtag = vtag;
-    db_tag->flag = 0;
-
-    return db_tag;
-    
-}
-
-struct dentry *lookup_file(struct inode *dir, struct dentry *dentry, unsigned int flags){
-    /*
-    * Lookup file in tag
+    * Create vtag and vdir.
+    * return vdir (dentry) if success else return NULL
     *
-    * the lookup search in dmap, and load the dentry to dcache
-    * if found return dentry of file, else return NULL
-    */
-
-    struct db_tag *cursor, *current_db_tag;
-    struct datafile *datafile;
-    struct dentry *d_file = NULL;
-
-    cursor = add_db_tag_cursor(&vtag->db_tags);
-    if(!cursor)
-        return NULL;
-    
-    current_db_tag = cursor;
-
-    while(1){
-        current_db_tag = get_current_update_db_tag(cursor, &vtag->db_tags, NULL);
-        if(!current_db_tag)
-            break;
-
-        datafile = lookup_datafile_in_db(db_tag, dentry->d_name.name);
-        if(datafile){
-            d_file = load_datafile(vtag, datafile);
-            if(d_file)
-                goto out;
-        }
-    }
-out:
-    delete_db_tag(cursor);
-    return d_file;
-}
-
-struct datafile *lookup_datafile_in_db(struct db_tag *db_tag, char *name){
-    // move to database.c
-
-    /*
-    * Lookup datafile in db_tag by name
-    * Search in dmap datafile by name
+    * The function always returns vdir
+    * if there is a problem not of the module such as a resource problem
+    * (for example there is not enough memory)
     *
-    * if found return datafile, else return NULL
+    * If the function is called then the tag is probably not in the cache
     */
-    struct dentry *dentry;
 
-    dentry = lookup_dentry_in_db(db_tag->dir, name);
-    if(!dentry)
+    struct vtag *vtag;
+    struct dentry *vdir, *d_parent;
+
+    vtag = create_vtag(dentry->d_name.name);
+    if(!vtag)
         return NULL;
     
-    return init_datafile(dentry, db_tag->sb);
+    vdir = create_vdir(dentry->d_name.name); // <<<
+    if(vdir)
+        vdir->d_inode->i_private = vtag;
+    else{
+        d_parent = dget_parent(dentry);
+        if(d_parent){
+            vdir = db_lookup_dentry_share(d_parent, dentry->d_name.name);
+            dput(d_parent);
+        }
+        release_vtag(vtag);
+    }
+    return vdir;
 }
 
-struct datafile *lookup_dentry_in_db(struct dentry *root, char *name){
+
+
+
+
+
+
+
+struct dentry *lookup_dentry_in_db(struct dentry *root, char *name){
     // move to database.c
 
     /*
@@ -400,6 +778,24 @@ struct datafile *lookup_dentry_in_db(struct dentry *root, char *name){
     dentry = db_lookup_dentry_share(dmap, name);
     dput(dmap);
     return dentry;
+}
+
+struct datafile *lookup_datafile_in_db(struct db_tag *db_tag, char *name){
+    // move to database.c
+
+    /*
+    * Lookup datafile in db_tag by name
+    * Search in dmap datafile by name
+    *
+    * if found return datafile, else return NULL
+    */
+    struct dentry *dentry;
+
+    dentry = lookup_dentry_in_db(db_tag->dir, name);
+    if(!dentry)
+        return NULL;
+    
+    return init_datafile(dentry, db_tag->sb);
 }
 
 struct dentry *load_datafile(struct vtag *vtag, struct datafile *datafile){
@@ -431,259 +827,88 @@ out:
     return dentry;
 }
 
-int tag_dir_open(struct inode *inode, struct file *file){
+
+struct dentry *lookup_file(struct inode *dir, struct dentry *dentry, unsigned int flags){
     /*
-    * Create and add tag_context to file
-    * return 0 if success, else retrun non-zero
-    */
-
-    tag_ctx = init_tag_context(inode->i_private);
-    if(!tag_ctx)
-        return -ENOMEM;
-    file->private_data = tag_ctx;
-    return 0;
-}
-
-int tag_dir_close(struct inode *inode, struct file *file){
-    /*
-    * release tag context and disconnet tag_context from file
-    * return 0
-    */
-    
-    release_tag_context(file->private_data);
-    file->private_data = NULL;
-    return 0;
-}
-
-struct tag_context *init_tag_context(struct vtag *vtag){
-    /*
-    * Create initialized tag_context
-    * return tag_context if success, else return NULL
-    */
-
-    struct tag_context *tag_ctx;
-    tag_ctx = alloc_tag_context();
-    if(!tag_ctx)
-        return NULL;
-
-    tag_ctx->vtag = vtag;
-
-    tag_ctx->file_tag = NULL;
-    tag_ctx->file_branch = NULL;
-
-    tag_ctx->db_tag_cursor = NULL;
-    tag_ctx->vbranch_cursor = NULL;
-    tag_ctx->dentry_cursor = NULL;
-
-    tag_ctx->flag = 0;
-
-	spin_lock_init(tag_ctx->vbranch_cursor_lock); // ??? needed
-	spin_lock_init(tag_ctx->db_tag_cursor_lock);
-	spin_lock_init(tag_ctx->dentry_cursor_lock);
-
-	mutex_init(&tag_ctx->file_tag_lock);
-	mutex_init(&tag_ctx->file_branch_lock); // ??? needed
-
-    tag_ctx->is_locked_vbranch = false;
-
-    return tag_ctx;
-}
-
-int release_tag_context(struct tag_context *tag_ctx){
-    /*
-    * release tag_context
-    * return 0 if success else return non-zero
-    */
-
-    if(tag_ctx->file_tag)
-        fput(tag_ctx->file_tag);
-    
-    if(tag_ctx->file_branch)
-        fput(tag_ctx->file_branch);
-
-    if(tag_ctx->db_tag_cursor)
-        delete_db_tag(tag_ctx->db_tag_cursor);
-    
-    if(tag_ctx->vbranch_cursor){
-        put_vbranch(vbranch, tag_ctx);
-        delete_vbranch(tag_ctx->vbranch_cursor);
-    }
-    
-    if(tag_ctx->dentry_cursor)
-        delete_dentry_list(tag_ctx->dentry_cursor);
-    
-    kfree(tag_ctx);
-
-    return 0;
-}
-
-int tag_readdir(struct file *file, struct dir_context *ctx){
-    /*
-    * Emit files from current branch.
-    * 
-    * That means the branch must be cached.
-    * return 0
-    */
-
-    bool loop = true;
-    long count = 0;
-    struct tag_context *tag_ctx = (struct tag_context *)file->private_data;
-
-retry:
-    db_tag = get_db_tag(tag_ctx); // ^^^
-    if(!db_tag)
-        return 0;
-    vbranch = get_vbranch_lock(tag_ctx, db_tag); // ^^^
-    if(!vbranch)
-        return 0;
-
-    count = scan_vbranch(ctx, vbranch, tag_ctx, db_tag);
-    if(!count && loop){
-        loop = false;
-        goto retry;
-    }
-    return 0;
-}
-
-int scan_vbranch(struct dir_context *ctx, struct vbranch *vbranch, struct tag_context *tag_ctx, struct db_tag *db_tag){
-    /*
-    * Scan the branch and emit files.
-    * Returns the number of files it emit
+    * Lookup file in tag
     *
-    * If cursor is end, free vbranch
+    * the lookup search in dmap, and load the dentry to dcache
+    * if found return dentry of file, else return NULL
     */
-    
-    struct dentry_list *cursor, *current_dentry;
-    long count = 0;
 
-    if(!tag_ctx->dentry_cursor)
-        tag_ctx->dentry_cursor = add_dentry_cursor(&vbranch->dentries);
-        
-    cursor = tag_ctx->dentry_cursor;
-    current_dentry = cursor;
+    struct db_tag *cursor, *current_db_tag;
+    struct datafile *datafile;
+    struct dentry_list *dentry_list;
+
+    struct dentry *d_file = NULL;
+    struct vtag *vtag = dir->i_private;
+    
+    if(!vtag) // needed ???
+        return NULL;
+    
+    cursor = add_db_tag_cursor(&vtag->db_tags);
+    if(!cursor)
+        return NULL;
 
     while(1){
-        // current_dentry = get_current_update_dentry(cursor, &vbranch->dentries, &tag_ctx->dentry_cursor_lock);
-        current_dentry = get_current_dentry_list(cursor, &vbranch->dentries);
-        if(!current_dentry)
+        current_db_tag = get_current_update_db_tag(cursor, &vtag->db_tags, NULL);
+        if(!current_db_tag)
             break;
-
-        if(!emit_dentry(ctx, current_dentry->dentry))
-            break;
-
-        update_dentry_list_cursor(cursor, current_dentry); // check if must lock (now not lock)
-        count++;
-    }
-
-    // if(is_vbranch_in_end(cursor)) // <<<
-    if(!cursor){
-        put_vbranch(vbranch, tag_ctx);
-        delete_dentry_list(tag_ctx->dentry_cursor);
-        get_current_update_vbranch(tag_ctx->vbranch_cursor, &db_tag->vbranchs, &db_tag->vbranchs_lock);
-    }
-    return count;
-}
-
-bool emit_dentry(struct dir_context *ctx, struct dentry *dentry){
-    /*
-    * Emit files.
-    * return true if the emit success, else return false
-    */
-
-    struct inode *inode;
-    const char *name;
-	unsigned type;
-	int len;
-	u64 ino;
-    
-    inode = d_inode(dentry);
-    if(!inode) // needed?
-        return false;
-    
-    name = dentry->d_name.name;
-    len = dentry->d_name.len;
-    type = dt_type(inode);
-    ino = inode->i_ino;
-
-    return dir_emit(ctx, name, len, ino, type);
-}
-
-struct vbranch *get_vbranch_lock(struct tag_context *tag_ctx, struct db_tag *db_tag){
-    /*
-    * return the current vbranch.
-    * if no more dentries return NULL.
-    *
-    * The vbranch searching start in fast path (in caches)
-    * if not fount goes to slow path
-    */
-    
-    struct vbranch *vbranch;
-    int err;
-
-    vbranch = fast_lookup_vbranch(tag_ctx, db_tag);
-    if(vbranch && is_branch_loaded(vbranch)){
-        if(lock_vbranch(vbranch, &tag_ctx->dentry_cursor_lock, &tag_ctx->is_locked_vbranch))
-            return vbranch;
-    }
-    vbranch = slow_lookup_vbranch(tag_ctx, db_tag, vbranch);
-    if(!vbranch)
-        return NULL;
-    
-    if(is_branch_loaded(vbranch))
-        return lock_vbranch(vbranch, &tag_ctx->dentry_cursor_lock, &tag_ctx->is_locked_vbranch);
-    else
-        return load_vbranch(tag_ctx, vbranch);
-}
-
-struct vbranch *fast_lookup_vbranch(struct tag_context *tag_ctx,struct db_tag *db_tag){
-    /*
-    * return vbranch if success, else return NULL
-    *
-    * The search is only done in the cache (the lists from db_tag).
-    */
-
-    struct vbranch *current_vbranch;
-    struct vbranch *cursor, *vbranch_cursor;
-
-    if(!tag_ctx->vbranch_cursor)
-        tag_ctx->vbranch_cursor = add_vbranch_cursor(&db_tag->vbranchs);
         
-    cursor = tag_ctx->vbranch_cursor;
-    current_vbranch = cursor;
+        
 
-    return get_current_vbranch(cursor, &db_tag->vbranchs);
+        datafile = lookup_datafile_in_db(current_db_tag, dentry->d_name.name);
+        if(!datafile)
+            continue;
+
+        d_file = load_datafile(vtag, datafile);
+        if(!d_file)
+            break; // todo: check what need in this error ???
+        
+        dentry_list = init_dentry_list(d_file, vtag, NULL);
+        if(!dentry_list){
+            dput(d_file);
+            d_file = NULL;
+            break;
+        }
+        d_file->d_fsdata = dentry_list;
+    }
+    delete_db_tag(cursor);
+    return d_file;
 }
 
-bool lock_vbranch(struct vbranch *vbranch, spinlock_t *lock, bool *is_locked_vbranch){ 
+
+
+
+
+int unlock_vbranch(struct vbranch *vbranch, struct dentry_list *last){
     /*
-    * try lock vbranch, if success return true, else return false
+    * Unlocks a vbranch after the position of the past_cursor until the beginning.
     *
-    * Solve the problem of repeated locking by the same caller (same context) !!! v
+    * get vbranch and last of the place that could not be locked from
+    * if the past_cursor is NULL try unlock all dentries in vbranch
+    * return 0 if success, else return non-zero
+    
+    (use in error lock_vbranch and drop_vbranch)
+        todo mabay: new reverse for function ???
     */
-    if(*is_locked_vbranch)
-        return true;
+
+    struct dentry *dentry;
+    struct dentry_list *cursor, *current_dentry_list;
     
-    kref_get(&vbranch->kref);
-    
-    if(is_vbranch_stale(vbranch))
-        goto out_err;
-    
-    if(!kref_read(&vbranch->kref)){
-        if(!lock_dentries_vbranch(vbranch, lock, is_locked_vbranch))
-            goto out_err;
+    cursor = add_dentry_cursor(&vbranch->dentries);
+    if(!cursor)
+        return -ENOMEM;
+
+    while(1){
+        current_dentry_list = get_current_update_dentry(cursor, &vbranch->dentries, NULL); // ??? lock
+        if(!current_dentry_list || current_dentry_list == last)
+            break;
+        dput(current_dentry_list->dentry); // ???
     }
-
-    if(is_vbranch_stale(vbranch))
-        goto out_err;
-
-    *is_locked_vbranch = true;
-    // vbranch->flag |= VBRANCH_LOCK;
-
-    return true;
-
-out_err:
-    kref_put(&vbranch->kref, release_vbranch_kref);
-    return false;
+    delete_dentry_list(cursor);
+    // vbranch->flag &= ~VBRANCH_LOCK;
+    return 0;
 }
 
 
@@ -717,182 +942,112 @@ out:
     return ret;
 }
 
-int unlock_vbranch(struct vbranch *vbranch, struct dentry_list *last){
+bool lock_vbranch(struct vbranch *vbranch, spinlock_t *lock, bool *is_locked_vbranch){ 
     /*
-    * Unlocks a vbranch after the position of the past_cursor until the beginning.
+    * try lock vbranch, if success return true, else return false
     *
-    * get vbranch and last of the place that could not be locked from
-    * if the past_cursor is NULL try unlock all dentries in vbranch
-    * return 0 if success, else return non-zero
+    * Solve the problem of repeated locking by the same caller (same context) !!! v
+    */
+    if(*is_locked_vbranch)
+        return true;
     
-    (use in error lock_vbranch and drop_vbranch)
-        todo mabay: new reverse for function ???
-    */
-
-    struct dentry *dentry;
-    struct dentry_list *cursor, *current_dentry_list;
+    kref_get(&vbranch->kref);
     
-    cursor = add_dentry_cursor(&vbranch->dentries);
-    if(!cursor)
-        return -ENOMEM;
-
-    while(1){
-        current_dentry_list = get_current_update_dentry(cursor, &vbranch->dentries, lock); // ??? lock
-        if(!current_dentry_list || current_dentry_list == last)
-            break;
-        dentry = dput(current_dentry_list->dentry);
-    }
-    delete_dentry_list(cursor);
-    // vbranch->flag &= ~VBRANCH_LOCK;
-    return 0;
-}
-
-bool is_branch_loaded(struct vbranch *vbranch){ // <<<
-    /*
-    * return true if the branch alredy loaded to cache, else return false
-    */
-
-    return !(vbranch->flag & INIT_MODE) && !is_vbranch_stale(vbranch);
-}
-
-struct vbranch *slow_lookup_vbranch(struct tag_context *tag_ctx, struct db_tag *db_tag, struct vbranch *vbranch){ // <<<
-    /*
-    * return vbranch if success, else return NULL.
-    *
-    * The lookup tries hard to get the vbranch
-    * and does all the things necessary to get it
-    *
-    * The function return base vbranch, ???
-    * that is, it contains basic information and needs to be loaded ???
-    */
-
-retry_readahead:
-    if(!vbranch){
-        if(!readahead_vbranchs(tag_ctx, db_tag, NR_BRANCH_READ_AHEAD)){
-            db_tag = update_next_db_tag(tag_ctx);
-            if(!db_tag)
-                return NULL;
-            move_vbranch_cursor(tag_ctx->vbranch_cursor, &db_tag->vbranchs);
-        }
-        vbranch = get_current_vbranch(tag_ctx->vbranch_cursor, &db_tag->vbranchs);
-        goto retry_readahead;
+    if(is_vbranch_stale(vbranch))
+        goto out_err;
+    
+    if(kref_read(&vbranch->kref) == 1){
+        if(!lock_dentries_vbranch(vbranch, lock))
+            goto out_err;
     }
 
     if(is_vbranch_stale(vbranch))
-        drop_vbranch(vbranch);
-    return vbranch;
+        goto out_err;
+
+    *is_locked_vbranch = true;
+
+    return true;
+
+out_err:
+    kref_put(&vbranch->kref, release_vbranch_kref);
+    return false;
 }
 
-struct file *open_file_branch(struct tag_context *tag_ctx, struct vbranch *vbranch){
+
+struct vbranch *fast_lookup_vbranch(struct tag_context *tag_ctx,struct db_tag *db_tag){
     /*
-    * get tag_ctx, vbranch.
-    * try open file of vbranch (in disk)
+    * return vbranch if success, else return NULL
     *
-    * lookup in rmap the dir of branch.
-    * return file if success, else return NULL.
+    * The search is only done in the cache (the lists from db_tag).
     */
 
-    struct dentry *rmap, *dentry;
+    struct vbranch *current_vbranch;
+    struct vbranch *cursor, *vbranch_cursor;
+
+    if(!tag_ctx->vbranch_cursor)
+        tag_ctx->vbranch_cursor = add_vbranch_cursor(&db_tag->vbranchs);
+        
+    cursor = tag_ctx->vbranch_cursor;
+    current_vbranch = cursor;
+
+    return get_current_vbranch(cursor, &db_tag->vbranchs);
+}
+
+struct file *open_file_tag(struct tag_context *tag_ctx, struct db_tag *db_tag){  // <<<
+    /*
+    * open rmap dir from db_tag
+    * return rmap file if success, else return NULL
+    */
+
+    struct dentry *rmap;
     struct file *filp = NULL;
 
-    if(!tag_ctx->file_branch){
-        mutex_lock(&tag_ctx->file_branch_lock);
+    // if(!tag_ctx->file_tag)
+    mutex_lock(&tag_ctx->file_tag_lock);
 
     if(tag_ctx->file_tag){
-            filp = tag_ctx->file_tag;
-            goto out;
-        }
-
-    rmap = lookup_rmap(vbranch->db_tag->dir);
+        filp = tag_ctx->file_tag;
+        goto out;
+    }
+    rmap = lookup_rmap(db_tag->dir);
     if(!rmap)
         goto out;
-    
-    dentry = db_lookup_dentry_share(dentry, vbranch->name);
-    dput(rmap);
-    if(!dentry)
-        goto out;
-    
-    filp = open_file_dentry(dentry, O_RDONLY | O_DIRECTORY);
-    dput(dentry);
-
+    filp = open_file_dentry(rmap, O_RDONLY | O_DIRECTORY);
 out:
-    mutex_unlock(&tag_ctx->file_branch_lock);
+    mutex_unlock(&tag_ctx->file_tag_lock);
     return filp;
 }
 
-struct vbranch *load_vbranch(struct tag_context *tag_ctx, struct vbranch *vbranch){ // <<<
+struct vbranch *load_base_vbranch(struct db_tag *db_tag, char *name){
     /*
-    * get base vbranch and tag_ctx
-    * try to load this vbranch
-    *
+    * load the base of vbranch to list in db_tag.
     * return vbranch if success, else return NULL
     */
-    
-    struct file *file_branch;
+    struct vbranch *vbranch;
 
-    mutex_lock(&vbranch->vbranch_lock);
-
-    if(!tag_ctx->file_branch)
-        tag_ctx->file_branch = open_file_branch(tag_ctx, vbranch);
-    file_branch = tag_ctx->file_branch;
-
-    if(!file_branch){
-        vbranch = NULL;
-        goto out;
-    }
-
-    struct getdents_callback_branch getdents_branch = {
-		.ctx.actor = iter_branch,
-        .sb = db_tag->sb,
-        .vbranch = vbranch,
-        .vtag = tag_ctx->vtag,
-        .sequence = 0,
-        .mode = 0,
-        .dir = file_branch->f_path.dentry,
-	};
-
-    while(1){
-        long old_seq = getdents_branch.sequence;
-		err = iterate_dir(file_branch, &getdents_branch.ctx);
-
-        if(IS_ERR(err)) // ???
-            break;
-        
-        if(old_seq == getdents_branch.sequence){
-            tag_ctx->file_branch = NULL;
-            fput(file_branch);
-			break;
-        }
-    }
-
-out:
-    mutex_unlock(&vbranch->vbranch_lock);
-    if(vbranch){
-        clean_stale(vbranch);
-        vbranch->flag &= ~INIT_MODE;
-    }
-
+    vbranch = alloc_vbranch();
+    if(!vbranch)
+        return NULL;
+    init_vbranch(vbranch, db_tag, name);
     return vbranch;
 }
 
-
-struct db_tag *get_db_tag(struct tag_context *tag_ctx){
-    /*
-    * return the current db_tag.
-    * if no more db_tags return NULL.
-    *
-    * In the end of db_tag must update before call more times !!!
-    */
-
-    struct db_tag *cursor, *current_db_tag;
-
-    if(!tag_ctx->db_tag_cursor)
-        tag_ctx->db_tag_cursor = add_db_tag_cursor(&tag_ctx->vtag->db_tags);
+int iter_tag(struct dir_context *ctx, const char *name, int len,
+                loff_t pos, u64 ino, unsigned int d_type){  // <<<
     
-    cursor = tag_ctx->db_tag_cursor;
-    current_db_tag = cursor;
+    int err = 0;
+    struct db_tag *db_tag;
+    struct getdents_callback_tag *getdents_tag = container_of(ctx, struct getdents_callback_tag, ctx);
+    
+    db_tag = getdents_tag->db_tag;
+    getdents_tag->sequence++;
 
-    return get_current_db_tag(cursor, &tag_ctx->vtag->db_tags);
+    if(!strcmp(name, DOT_STR) || !strcmp(name, DOTDOT_STR))
+		return 0;
+
+    if(!(getdents_tag->mode & SKIP_MODE))
+        load_base_vbranch(getdents_tag->db_tag, name); // <<<
+    return err;
 }
 
 int readahead_vbranchs(struct tag_context *tag_ctx, struct db_tag *db_tag, long max_count){
@@ -905,9 +1060,10 @@ int readahead_vbranchs(struct tag_context *tag_ctx, struct db_tag *db_tag, long 
     * Returns the number of vbranch read
     */
 
-    long count = 0;
     int err;
+    struct vbranch *vbranch;
     struct file *file_tag;
+    long count = 0;
 
     mutex_lock(&db_tag->vbranchs_lock);
     vbranch = fast_lookup_vbranch(tag_ctx, db_tag);
@@ -945,267 +1101,6 @@ out:
     return count;
 }
 
-struct db_tag *update_next_db_tag(struct tag_context *tag_ctx){
-    /*
-    * Moves the cursor to the next db_tag
-    *
-    * Return the current db_tag, if success else return NULL
-    */
-    if(tag_ctx->file_tag){
-        fput(tag_ctx->file_tag);
-        tag_ctx->file_tag = NULL;
-    }
-    get_current_update_db_tag(tag_ctx->db_tag_cursor, &tag_ctx->vtag->db_tags, &tag_ctx->db_tag_cursor_lock);
-    return get_current_db_tag(tag_ctx->db_tag_cursor, &tag_ctx->vtag->db_tags);
-}
-
-struct file *open_file_dentry(struct dentry *dentry, umode_t mode){
-    /*
-    * open file of dentry.
-    * return file if success, else return NULL.
-    */
-
-    struct path path;
-    struct file *filp = NULL;
-    char *buff_path, *full_path;
-    int err;
-
-
-    buff_path = kzalloc(PATH_MAX, GFP_KERNEL);
-    if(!buff_path)
-        return NULL;
-    
-    full_path = dentry_path_raw(dentry, buff_path, PATH_MAX);
-    if(IS_ERR(full_path))
-        goto out;
-    
-    err = kern_path(full_path, 0, &path);
-    if(IS_ERR(err))
-        goto out;
-
-    filp = dentry_open(&path, mode, current_cred());
-    path_put(&path);
-
-out:
-    kfree(buff_path)
-    return filp;
-}
-struct dentry *lookup_rmap(struct dentry *dentry){
-    // move database.c ?
-    /*
-    * get dentry of dir tag (on disk).
-    *
-    * return dentry of rmap (on disk) if success,
-    * else return NULL.
-    */
-    
-    return db_lookup_dentry_share(dir_tag, RMAP_DIR_NAME);
-}
-
-struct file *open_file_tag(struct tag_context *tag_ctx, struct db_tag *db_tag){  // <<<
-    /*
-    * open rmap dir from db_tag
-    * return rmap file if success, else return NULL
-    */
-
-    struct dentry *rmap;
-    struct file *filp = NULL;
-
-    if(!tag_ctx->file_tag){
-        mutex_lock(&tag_ctx->file_tag_lock);
-
-        if(tag_ctx->file_tag){
-            filp = tag_ctx->file_tag;
-            goto out;
-        }
-        rmap = lookup_rmap(db_tag->dir);
-        if(!rmap)
-            goto out;
-        filp = open_file_dentry(rmap, O_RDONLY | O_DIRECTORY);
-out:
-        mutex_unlock(&tag_ctx->file_tag_lock);
-        return filp;
-    }
-}
-
-int iter_tag(struct dir_context *ctx, const char *name, int len,
-                loff_t pos, u64 ino, unsigned int d_type){  // <<<
-    
-    int err = 0;
-    struct db_tag *db_tag;
-    struct getdents_callback_tag *getdents_tag = container_of(ctx, struct getdents_callback_tag, ctx);
-    
-    db_tag = getdents_tag->db_tag;
-    getdents_tag->sequence++;
-
-    if(!strcmp(name, DOT_STR) || !strcmp(name, DOTDOT_STR))
-		return 0;
-
-    if(!(getdents_tag->mode & SKIP_MODE))
-        load_base_vbranch(getdents_tag->db_tag, name); // <<<
-    return err;
-}
-
-struct vbranch *load_base_vbranch(struct db_tag *db_tag, char *name){
-    /*
-    * load the base of vbranch to list in db_tag.
-    * return vbranch if success, else return NULL
-    */
-    struct vbranch *vbranch;
-
-    vbranch = alloc_vbranch();
-    if(!vbranch)
-        return NULL;
-    init_vbranch(vbranch, db_tag, name);
-    return vbranch;
-}
-
-void init_vbranch(struct vbranch *vbranch, struct db_tag *db_tag, char *name){
-    vbranch->name = name;
-    vbranch->flag = INIT_MODE;
-    vbranch->db_tag = db_tag;
-
-    INIT_LIST_HEAD(&vbranch->dentries);
-    INIT_LIST_HEAD(&vbranch->child);
-    clean_stale(vbranch);
-    mutex_init(&vbranch->vbranch_lock);
-    kref_init(&vbranch->kref);
-
-    /*
-    * add_vbranch() must to be last, becuse after this line,
-    * the vbranch exposed in public.
-    */
-    add_vbranch(&db_tag->vbranchs, vbranch);
-}
-
-struct dentry_list *init_dentry_list(struct dentry *dentry, struct vtag *vtag, struct vbranch *vbranch){
-    /*
-    * alloc and fill dentry_list
-    */
-
-    struct dentry_list *dentry_list = alloc_dentry_list();
-    if(!dentry_list)
-        return NULL;
-
-    INIT_LIST_HEAD(&dentry_list->child);
-    dentry_list->flag = 0;
-    dentry_list->vtag = vtag;
-    dentry_list->vbranch = vbranch;
-    dentry_list->dentry = dentry;
-    return dentry_list;
-}
-
-struct datafile *init_datafile(struct dentry *dentry, struct super_block *sb){
-    /*
-    * get dentry of db file, sb of real file
-    *
-    * alloc and fill datafile.
-    * read the ino, ino_parent of real file from db.
-    * return datafile if success, else return NULL
-    */
-
-    struct datafile *datafile = alloc_datafile();
-    int err;
-
-    if(!datafile)
-        return NULL;
-
-    err = fill_datafile(datafile, dentry, sb);
-    if(err){
-        kfree(datafile);
-        return NULL;
-    }
-    return datafile;
-}
-
-int fill_datafile(struct datafile *datafile, struct dentry *dentry, struct super_block *sb){
-    // move to database.c
-
-    /*
-    * @datafile: empty datafile
-    * @dentry: dentry of db file
-    * @sb: sb of real file
-    *
-    * fill the datafile from data in disk
-    * return 0 if success, else return non-zero
-    */
-
-    int err;
-
-    datafile->name = dup_name(dentry->d_name.name);
-    if(!datafile->name)
-        return -ENOMEM;
-    
-    err = db_read_datafile(dentry, datafile);
-    if(err){
-        kfree(datafile->name);
-        return err;
-    }
-
-    datafile->sb = sb;
-    return 0;
-}
-
-void free_datafile(struct datafile *datafile){
-    /*
-    * free datafile and resources.
-    */
-    kfree(datafile->name);
-    kfree(datafile);
-}
-
-
-
-int iter_branch(struct dir_context *ctx, const char *name, int len,
-                loff_t pos, u64 ino, unsigned int d_type){  // <<<
-    
-    int err = 0;
-    struct super_block *sb;
-    struct vbranch *vbranch;
-    struct vtag *vtag;
-    struct dentry *dir, *db_file_dentry, *dentry;
-    struct datafile *datafile;
-    struct dentry_list *dentry_list;
-
-    struct getdents_callback_branch *getdents_branch = container_of(ctx, struct getdents_callback_branch, ctx);
-    
-    getdents_branch->sequence++;
-    sb = getdents_branch->sb;
-    vbranch = getdents_branch->vbranch;
-    vtag = getdents_branch->vtag;
-    dir = getdents_branch->dir;
-
-    if(!strcmp(name, DOT_STR) || !strcmp(name, DOTDOT_STR))
-		return 0;
-
-    ctx->pos++; // ???
-
-    if((getdents_branch->mode & SKIP_MODE))
-        return 0;
-    
-    db_file_dentry = db_lookup_dentry_share(dir, name);
-    if(!db_file_dentry)
-        return -ENOENT;
-    
-    datafile = init_datafile(db_file_dentry, sb);
-    dput(db_file_dentry);
-    if(!datafile)
-        return -ENOMEM;
-    dentry = load_datafile(vtag, datafile);
-    if(dentry){
-        dentry_list = init_dentry_list(dentry, vtag, vbranch);
-        if(dentry_list)
-            add_dentry_list(&vbranch->dentries, dentry_list);
-        else
-            err = -ENOMEM;
-    }
-    free_datafile(datafile);
-    return err;
-}
-bool is_vbranch_lock(struct vbranch *vbranch){
-    return !!kref_read(&vbranch->kref);
-}
-
 int drop_vbranch(struct vbranch *vbranch){ // <<<
     /*
     * emptied the vbranch, becomes the vbranch to base (dput to all dentries)
@@ -1222,7 +1117,7 @@ int drop_vbranch(struct vbranch *vbranch){ // <<<
     struct dentry_list *cursor, *current_dentry_list;
 
     if(is_vbranch_lock(vbranch))
-        unlock_vbranch(vbranch);
+        unlock_vbranch(vbranch, NULL);
 
     // shrink_vbranch(vbranch); // <<< ???
     
@@ -1231,7 +1126,7 @@ int drop_vbranch(struct vbranch *vbranch){ // <<<
         return -ENOMEM;
 
     while(1){
-        current_dentry_list = get_current_update_dentry(cursor, &vbranch->dentries, lock); // ??? lock
+        current_dentry_list = get_current_update_dentry(cursor, &vbranch->dentries, NULL); // ??? lock
         if(!current_dentry_list)
             break;
         d_drop(current_dentry_list->dentry);
@@ -1243,6 +1138,245 @@ int drop_vbranch(struct vbranch *vbranch){ // <<<
     // clean_stale(vbranch); // add when the vbranch became to base_vbranch (when empty).
     return 0;
 }
+
+struct db_tag *update_next_db_tag(struct tag_context *tag_ctx){
+    /*
+    * Moves the cursor to the next db_tag
+    *
+    * Return the current db_tag, if success else return NULL
+    */
+    if(tag_ctx->file_tag){
+        fput(tag_ctx->file_tag);
+        tag_ctx->file_tag = NULL;
+    }
+    get_current_update_db_tag(tag_ctx->db_tag_cursor, &tag_ctx->vtag->db_tags, &tag_ctx->db_tag_cursor_lock);
+    return get_current_db_tag(tag_ctx->db_tag_cursor, &tag_ctx->vtag->db_tags);
+}
+
+struct vbranch *slow_lookup_vbranch(struct tag_context *tag_ctx, struct db_tag *db_tag, struct vbranch *vbranch){ // <<<
+    /*
+    * return vbranch if success, else return NULL.
+    *
+    * The lookup tries hard to get the vbranch
+    * and does all the things necessary to get it
+    *
+    * The function return base vbranch, ???
+    * that is, it contains basic information and needs to be loaded ???
+    */
+
+retry_readahead:
+    if(!vbranch){
+        if(!readahead_vbranchs(tag_ctx, db_tag, NR_BRANCH_READ_AHEAD)){
+            db_tag = update_next_db_tag(tag_ctx);
+            if(!db_tag){
+
+                return NULL;
+            }
+            move_vbranch_cursor(tag_ctx->vbranch_cursor, &db_tag->vbranchs);
+        }
+        vbranch = get_current_vbranch(tag_ctx->vbranch_cursor, &db_tag->vbranchs);
+        goto retry_readahead;
+    }
+
+    if(is_vbranch_stale(vbranch))
+        drop_vbranch(vbranch);
+    return vbranch;
+}
+
+int iter_branch(struct dir_context *ctx, const char *name, int len,
+                loff_t pos, u64 ino, unsigned int d_type){  // <<<
+    
+    struct super_block *sb;
+    struct vbranch *vbranch;
+    struct vtag *vtag;
+    struct dentry *dir, *db_file_dentry, *dentry;
+    struct datafile *datafile;
+    struct dentry_list *dentry_list;
+    int err = 0;
+
+    struct getdents_callback_branch *getdents_branch = container_of(ctx, struct getdents_callback_branch, ctx);
+    
+    getdents_branch->sequence++;
+    sb = getdents_branch->sb;
+    vbranch = getdents_branch->vbranch;
+    vtag = getdents_branch->vtag;
+    dir = getdents_branch->dir;
+
+    if(!strcmp(name, DOT_STR) || !strcmp(name, DOTDOT_STR))
+		return 0;
+
+    ctx->pos++; // ???
+
+    if(getdents_branch->mode & SKIP_MODE)
+        return 0;
+    
+    db_file_dentry = db_lookup_dentry_share(dir, name);
+    if(!db_file_dentry)
+        return -ENOENT;
+    
+    datafile = init_datafile(db_file_dentry, sb);
+    dput(db_file_dentry);
+    if(!datafile)
+        return -ENOMEM;
+    dentry = load_datafile(vtag, datafile);
+    if(!dentry)
+        goto out;
+
+    dentry_list = init_dentry_list(dentry, vtag, vbranch);
+    if(dentry_list){
+        dentry->d_fsdata = dentry_list;
+        add_dentry_list(&vbranch->dentries, dentry_list);
+    }else{
+        err = -ENOMEM;
+        dput(dentry);
+    }
+out:
+    free_datafile(datafile);
+    return err;
+}
+
+struct file *open_file_branch(struct tag_context *tag_ctx, struct vbranch *vbranch){
+    /*
+    * get tag_ctx, vbranch.
+    * try open file of vbranch (in disk)
+    *
+    * lookup in rmap the dir of branch.
+    * return file if success, else return NULL.
+    */
+
+    struct dentry *rmap, *dentry;
+    struct file *filp = NULL;
+
+    // if(!tag_ctx->file_branch)
+    mutex_lock(&tag_ctx->file_branch_lock);
+
+    if(tag_ctx->file_branch){
+        filp = tag_ctx->file_branch;
+        goto out;
+    }
+
+    rmap = lookup_rmap(vbranch->db_tag->dir);
+    if(!rmap)
+        goto out;
+    
+    dentry = db_lookup_dentry_share(dentry, vbranch->name);
+    dput(rmap);
+    if(!dentry)
+        goto out;
+    
+    filp = open_file_dentry(dentry, O_RDONLY | O_DIRECTORY);
+    dput(dentry);
+
+out:
+    mutex_unlock(&tag_ctx->file_branch_lock);
+    return filp;
+}
+
+struct vbranch *load_vbranch(struct tag_context *tag_ctx, struct vbranch *vbranch, struct super_block *sb){ // <<<
+    /*
+    * get base vbranch and tag_ctx
+    * try to load this vbranch
+    *
+    * return vbranch if success, else return NULL
+    */
+    
+    struct file *file_branch;
+    int err;
+
+    mutex_lock(&vbranch->vbranch_lock);
+
+    if(!tag_ctx->file_branch)
+        tag_ctx->file_branch = open_file_branch(tag_ctx, vbranch);
+    file_branch = tag_ctx->file_branch;
+
+    if(!file_branch){
+        vbranch = NULL;
+        goto out;
+    }
+
+    struct getdents_callback_branch getdents_branch = {
+		.ctx.actor = iter_branch,
+        .sb = sb,
+        .vbranch = vbranch,
+        .vtag = tag_ctx->vtag,
+        .dir = file_branch->f_path.dentry,
+        .sequence = 0,
+        .mode = 0,
+	};
+
+    while(1){
+        long old_seq = getdents_branch.sequence;
+		err = iterate_dir(file_branch, &getdents_branch.ctx);
+
+        if(IS_ERR(err)) // ???
+            break;
+        
+        if(old_seq == getdents_branch.sequence){
+            tag_ctx->file_branch = NULL;
+            fput(file_branch);
+			break;
+        }
+    }
+
+out:
+    mutex_unlock(&vbranch->vbranch_lock);
+    if(vbranch){
+        kref_get(&vbranch->kref);
+        tag_ctx->is_locked_vbranch = true;
+        clean_stale(vbranch);
+        vbranch->flag &= ~INIT_MODE;
+    }
+    return vbranch;
+}
+
+struct vbranch *get_vbranch_lock(struct tag_context *tag_ctx, struct db_tag *db_tag){
+    /*
+    * return the current vbranch.
+    * if no more dentries return NULL.
+    *
+    * The vbranch searching start in fast path (in caches)
+    * if not fount goes to slow path
+    */
+    
+    struct vbranch *vbranch;
+    int err;
+
+    vbranch = fast_lookup_vbranch(tag_ctx, db_tag);
+    if(vbranch && is_branch_loaded(vbranch)){
+        if(lock_vbranch(vbranch, &tag_ctx->dentry_cursor_lock, &tag_ctx->is_locked_vbranch))
+            return vbranch;
+    }
+    vbranch = slow_lookup_vbranch(tag_ctx, db_tag, vbranch);
+    if(!vbranch)
+        return NULL;
+    
+    if(is_branch_loaded(vbranch))
+        if(lock_vbranch(vbranch, &tag_ctx->dentry_cursor_lock, &tag_ctx->is_locked_vbranch))
+            return vbranch;
+    return load_vbranch(tag_ctx, vbranch, db_tag->sb);
+
+}
+
+
+struct db_tag *get_db_tag(struct tag_context *tag_ctx){
+    /*
+    * return the current db_tag.
+    * if no more db_tags return NULL.
+    *
+    * In the end of db_tag must update before call more times !!!
+    */
+
+    struct db_tag *cursor;
+
+    spin_lock(&tag_ctx->vbranch_cursor_lock);
+    if(!tag_ctx->db_tag_cursor)
+        tag_ctx->db_tag_cursor = add_db_tag_cursor(&tag_ctx->vtag->db_tags);
+    spin_unlock(&tag_ctx->vbranch_cursor_lock);
+    
+    
+    return get_current_db_tag(tag_ctx->db_tag_cursor, &tag_ctx->vtag->db_tags);
+}
+
 
 void put_vbranch(struct vbranch *vbranch, struct tag_context *tag_ctx){
     /*
@@ -1260,154 +1394,119 @@ void put_vbranch(struct vbranch *vbranch, struct tag_context *tag_ctx){
         unlock_vbranch(vbranch, NULL);
 
     tag_ctx->is_locked_vbranch = false;
-
-   
 }
 
-int dentry_file_revalidate(struct dentry *dentry, unsigned int flags){
+
+bool emit_dentry(struct dir_context *ctx, struct dentry *dentry){
     /*
-    * check if vbranch of this dentry is stale
+    * Emit files.
+    * return true if the emit success, else return false
+    */
+
+    struct inode *inode;
+    const char *name;
+	unsigned type;
+	int len;
+	u64 ino;
+    
+    inode = d_inode(dentry);
+    if(!inode) // needed?
+        return false;
+    
+    name = dentry->d_name.name;
+    len = dentry->d_name.len;
+    type = dt_type(inode);
+    ino = inode->i_ino;
+
+    return dir_emit(ctx, name, len, ino, type);
+}
+
+
+int scan_vbranch(struct dir_context *ctx, struct vbranch *vbranch, struct tag_context *tag_ctx, struct db_tag *db_tag){
+    /*
+    * Scan the branch and emit files.
+    * Returns the number of files it emit
+    *
+    * If cursor is end, free vbranch
     */
     
-	return !is_vbranch_stale(((struct dentry_list *)dentry->d_fsdata)->vbranch);
-}
+    struct dentry_list *cursor, *current_dentry;
+    long count = 0;
 
-void free_dentry_list(struct dentry_list *dentry_list){
-    /*
-    * delete the dentry_list from dentries list, and free dentry_list.
-    */
-
-    delete_dentry_list(dentry_list);
-    kfree(dentry_list);
-}
-
-void dentry_file_release(struct dentry *dentry){
-    /*
-    * d_release of regular files in vdir
-    * make stale
-    * if the dentry is the last in vbranch, release vbranch
-    */
-
-    struct dentry_list *dentry_list = dentry->d_fsdata;
-    struct vbranch *vbranch = dentry_list->vbranch;
-
-    if(!is_vbranch_stale(vbranch))
-        make_stale(vbranch);
-
-    free_dentry_list(dentry_list);
-
-    if(is_vbranch_empty(vbranch)){
-        vbranch->flag = INIT_MODE;
-        clean_stale(vbranch);
-    }
-}
-
-void free_vbranch(struct vbranch *vbranch){
-    /*
-    * delete the vbranch from vbranchs list, and free vbranch.
-    */
-    delete_vbranch(vbranch);
-    kfree(vbranch->name);
-    kfree(vbranch);
-}
-
-
-void release_vbranch(struct vbranch *vbranch){  // <<<
-    /*
-    * Releases the branch and
-    * tries to release the db_tag if it can (when db_tag empty)
-    */
-
-    struct db_tag *db_tag = vbranch->db_tag;
-    free_vbranch(vbranch);
-    if(is_db_tag_empty(db_tag))
-        release_db_tag(db_tag);
-}
-
-void free_db_tag(struct db_tag *db_tag){
-    /*
-    * delete the db_tag from db_tags list, and free db_tag.
-    */
-
-    delete_db_tag(db_tag);
-    kfree(db_tag->name);
-    kfree(db_tag);
-}
-
-
-
-void release_db_tag(struct db_tag *db_tag){
-    /*
-    * Releases the db_tag and
-    * tries to release the vtag if it can (when vtag empty)
-    */
-
-    struct vtag *vtag = db_tag->vtag;
-    free_db_tag(vbranch);
-    if(is_vtag_empty(vtag))
-        release_vtag(vtag);
-}
-
-void free_vtag(struct vtag *vtag){
-    kfree(vtag->name);
-    kfree(vtag);
-}
-
-void release_vtag(struct vtag *vtag){ // <<<
-    /*
-    * Releases the vtag and all the resources of vtag (vdir)
-    */
-    
-    dput(vtag->vdir); // ??? try delete vdir
-    free_vtag(vtag);
-}
-
-
-void make_dead_vbranch(struct vbranch *vbranch){
-    struct dentry_list *cursor, *current_dentry_list;
-
-    if(is_vbranch_lock(vbranch)){
-        release_vbranch(vbranch);
-        return;
-    }
-
-    cursor = add_dentry_cursor(&vbranch->dentries);
-    if(!cursor)
-        return; // error ??? must success !!! (the vbranch remains alive)
+    if(!tag_ctx->dentry_cursor)
+        tag_ctx->dentry_cursor = add_dentry_cursor(&vbranch->dentries);
+        
+    cursor = tag_ctx->dentry_cursor;
+    current_dentry = cursor;
 
     while(1){
-        current_dentry_list = get_current_update_dentry(cursor, &vbranch->dentries, NULL); // ??? lock
-        if(!current_dentry_list)
+        // current_dentry = get_current_update_dentry(cursor, &vbranch->dentries, &tag_ctx->dentry_cursor_lock);
+        current_dentry = get_current_dentry_list(cursor, &vbranch->dentries);
+        if(!current_dentry)
             break;
-        current_dentry_list |= DEAD_MODE;
+
+        if(!emit_dentry(ctx, current_dentry->dentry))
+            break;
+
+        update_dentry_list_cursor(cursor, current_dentry); // check if must lock (now not lock)
+        count++;
     }
-    delete_dentry_list(cursor);
-    
+
+    // if(is_vbranch_in_end(cursor)) // <<<
+    if(!current_dentry){
+        delete_dentry_list(tag_ctx->dentry_cursor);
+        get_current_update_vbranch(tag_ctx->vbranch_cursor, &db_tag->vbranchs, NULL); //  &db_tag->vbranchs_lock ??? lock?
+        put_vbranch(vbranch, tag_ctx);
+    }
+    return count;
 }
 
-void umount_db_tag(struct db_tag *db_tag){
-    struct vbranch *cursor, *current_vbranch;
 
-    db_tag->flag |= DEAD_MODE;
-
-    shrink_dcache_sb(db_tag->sb);
-
-    cursor = add_vbranch_cursor(&db_tag->vbranchs);
-    if(!cursor)
-        return -ENOMEM;
-
-    while(1){
-        current_vbranch = get_current_update_vbranch(cursor, &db_tag->vbranchs, NULL); // ??? lock
-        if(!current_vbranch)
-            break;
-        make_dead_vbranch(current_vbranch);
-    }
-    delete_vbranch(cursor);
-}
-
-void unload_vtagfs(void){ // <<<
+int tag_readdir(struct file *file, struct dir_context *ctx){
     /*
-    * when the module unload (uninstall)
-    * must kill all structs and objects. !!!
+    * Emit files from current branch.
+    * 
+    * That means the branch must be cached.
+    * return 0
     */
+
+    struct db_tag *db_tag;
+    struct vbranch *vbranch;
+    bool loop = true;
+    long count = 0;
+    struct tag_context *tag_ctx = (struct tag_context *)file->private_data;
+
+retry:
+    db_tag = get_db_tag(tag_ctx); // ^^^
+    if(!db_tag)
+        return 0;
+    vbranch = get_vbranch_lock(tag_ctx, db_tag); // ^^^
+    if(!vbranch)
+        return 0;
+
+    count = scan_vbranch(ctx, vbranch, tag_ctx, db_tag);
+    if(!count && loop){
+        loop = false;
+        goto retry;
+    }
+    return 0;
 }
+
+const struct inode_operations tag_dir_inode_operations = {
+	.lookup		= lookup_file, // <<
+    
+	// .create		= ramfs_create,
+	// .link		= simple_link,
+	// .unlink		= simple_unlink,
+	// .symlink	= ramfs_symlink,
+	// .mkdir		= ramfs_mkdir,
+	// .rmdir		= simple_rmdir,
+	// .mknod		= ramfs_mknod,
+	// .rename		= simple_rename,
+	// .tmpfile	= ramfs_tmpfile,
+};
+
+const struct dentry_operations file_dentry_operations = {
+    .d_release = dentry_file_release,
+    .d_revalidate = dentry_file_revalidate,
+};
