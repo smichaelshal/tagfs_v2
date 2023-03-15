@@ -363,6 +363,8 @@ struct inode *symlink_tag(char *tag){
 	if(IS_ERR(symlink_str))
 		return ERR_PTR(-ENOENT);
 
+	pr_info("symlink_str: %s\n", symlink_str);
+
 	err = kern_path(symlink_str, 0, &path);
 	if(err)
 		return ERR_PTR(-ENOENT);

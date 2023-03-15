@@ -1,9 +1,10 @@
 #ifndef RAMFS_H_
 #define RAMFS_H_
 
+// extern const struct inode_operations tag_dir_inode_operations;
 
 // internal.h
-extern const struct inode_operations ramfs_file_inode_operations;
+// extern const struct inode_operations ramfs_file_inode_operations;
 
 
 // libfs.c
@@ -18,8 +19,12 @@ int simple_readpage(struct file *file, struct page *page);
 
 // file-mmu.c
 
+extern const struct inode_operations tag_dir_inode_operations;
+extern const struct file_operations tag_dir_operations;
+
 extern const struct file_operations ramfs_file_operations;
 extern const struct inode_operations ramfs_file_inode_operations;
+
 unsigned long ramfs_mmu_get_unmapped_area(struct file *file,
 		unsigned long addr, unsigned long len, unsigned long pgoff,
 		unsigned long flags);

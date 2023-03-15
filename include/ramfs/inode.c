@@ -295,3 +295,20 @@ struct file_system_type vtag_fs_type = {
 	.fs_flags	= FS_USERNS_MOUNT,
 };
 
+
+
+const struct inode_operations tag_dir_inode_operations = {
+	.symlink	= ramfs_symlink,
+	.create		= ramfs_create,
+	.link		= simple_link,
+	.unlink		= simple_unlink,
+	.mkdir		= ramfs_mkdir,
+	.rmdir		= simple_rmdir,
+	.mknod		= ramfs_mknod,
+	.rename		= simple_rename,
+	.tmpfile	= ramfs_tmpfile,
+	.lookup		= lookup_file,
+	
+	
+};
+// tag_dir_inode_operations.lookup = lookup_file;

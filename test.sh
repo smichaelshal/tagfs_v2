@@ -125,7 +125,7 @@ echo 3 > /proc/sys/vm/drop_caches
 ls -lai /.tag_u13/red/contain_u13/home/contain_u13/john/contain_u13/tes1/this_u13/kk1
 
 cd ..
-zip -r tagfs_err101.zip tagfs
+zip -r tagfs_err103.zip tagfs
 python3 -m http.server
 rm -rf tagfs_*.zip
 cd tagfs
@@ -210,13 +210,17 @@ lsmod | grep $MODULE_NAME
 mkdir -p $MOUNT_PATH
 
 
+
+
 insmod $MODULE_NAME.ko
 mount -t $MODULE_NAME none $MOUNT_PATH
 
+ls $MOUNT_PATH/red52
+
+cat ::red52/bli
 
 ./user/read_dir ::red52
 
-cat ::red52/bli
 
 ls -lai ::red52
 ls ::red52

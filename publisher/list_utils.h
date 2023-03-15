@@ -19,12 +19,16 @@ extern void update_dentry_list_cursor(struct dentry_list *cursor, struct dentry_
 extern struct dentry_list *get_current_update_dentry(struct dentry_list *cursor, struct list_head *head, spinlock_t *lock);
 
 // ----- vbranch -----
+extern struct vbranch *get_current_vbranch_prev(struct vbranch *cursor, struct list_head *head);
+extern struct vbranch *get_prev_vbranch(struct vbranch *cursor, struct list_head *head);
+
 
 extern struct vbranch *add_vbranch(struct list_head *list, struct vbranch *vbranch);
 
 extern struct vbranch *add_vbranch_cursor(struct list_head *list);
 
 extern struct vbranch *get_next_vbranch(struct vbranch *cursor, struct list_head *head);
+
 
 extern struct vbranch *get_current_vbranch(struct vbranch *cursor, struct list_head *head);
 

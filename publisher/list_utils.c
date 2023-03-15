@@ -1,7 +1,11 @@
 #include "publisher.h"
+#include "../utils/utils.h"
 
 
 // ----- dentry_list -----
+
+#define DEFAULT_TEXT_CURSOR "CURSOR"
+#define DEFAULT_TEXT_REG "REG_NULL"
 
 struct dentry_list *add_dentry_list(struct list_head *list, struct dentry_list *dentry_list){
     list_add(&dentry_list->child, list);
@@ -14,7 +18,7 @@ struct dentry_list *add_dentry_cursor(struct list_head *list){
     if(!cursor)
         return NULL;
     INIT_LIST_HEAD(&cursor->child);
-    cursor->flag |= CURSOR_MODE;
+    cursor->flag = CURSOR_MODE;
     list_add(&cursor->child, list);
     return cursor;
 }
@@ -28,6 +32,7 @@ struct dentry_list *get_next_dentry_list(struct dentry_list *cursor, struct list
 
     return list_entry(next, struct dentry_list, child);
 }
+
 
 struct dentry_list *get_current_dentry_list(struct dentry_list *cursor, struct list_head *head){
     while(cursor && cursor->flag & CURSOR_MODE)
@@ -57,6 +62,9 @@ out:
 // ----- vbranch -----
 
 struct vbranch *add_vbranch(struct list_head *list, struct vbranch *vbranch){
+    pr_info("vbranch addr: %x\n", vbranch);
+    if(!vbranch->name)
+        vbranch->name = dup_name(DEFAULT_TEXT_REG);
     list_add_tail(&vbranch->child, list);
     return vbranch;
 }
@@ -67,8 +75,10 @@ struct vbranch *add_vbranch_cursor(struct list_head *list){
     if(!cursor)
         return NULL;
     INIT_LIST_HEAD(&cursor->child);
-    cursor->flag |= CURSOR_MODE;
+    cursor->flag = CURSOR_MODE;
+    cursor->name = dup_name(DEFAULT_TEXT_CURSOR);
     list_add(&cursor->child, list);
+    pr_info("cursor vbranch addr: %x\n", cursor);
     return cursor;
 }
 
@@ -82,9 +92,29 @@ struct vbranch *get_next_vbranch(struct vbranch *cursor, struct list_head *head)
     return list_entry(next, struct vbranch, child);
 }
 
+struct vbranch *get_prev_vbranch(struct vbranch *cursor, struct list_head *head){
+    struct list_head *prev;
+
+    prev = cursor->child.prev;
+    if(prev == head)
+        return NULL;
+
+    return list_entry(prev, struct vbranch, child);
+}
+
 struct vbranch *get_current_vbranch(struct vbranch *cursor, struct list_head *head){
-    while(cursor && cursor->flag & CURSOR_MODE)
+    while(cursor && cursor->flag & CURSOR_MODE){
+        pr_info("y0\n");
         cursor = get_next_vbranch(cursor, head);
+    }
+    return cursor;
+}
+
+struct vbranch *get_current_vbranch_prev(struct vbranch *cursor, struct list_head *head){
+    while(cursor && cursor->flag & CURSOR_MODE){
+        pr_info("y1\n");
+        cursor = get_prev_vbranch(cursor, head);
+    }
     return cursor;
 }
 
@@ -111,6 +141,9 @@ out:
 // ----- db_tag -----
 
 struct db_tag *add_db_tag(struct list_head *list, struct db_tag *db_tag){
+    pr_info("add_db_tag addr: %x\n", db_tag);
+    if(!db_tag->name)
+        db_tag->name = dup_name(DEFAULT_TEXT_REG);
     list_add(&db_tag->child, list);
     return db_tag;
 }
@@ -121,8 +154,10 @@ struct db_tag *add_db_tag_cursor(struct list_head *list){
     if(!cursor)
         return NULL;
     INIT_LIST_HEAD(&cursor->child);
-    cursor->flag |= CURSOR_MODE;
+    cursor->flag = CURSOR_MODE;
+    cursor->name = dup_name(DEFAULT_TEXT_CURSOR);
     list_add(&cursor->child, list);
+    pr_info("cursor add_db_tag addr: %x\n", cursor);
     return cursor;
 }
 
