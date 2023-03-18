@@ -90,7 +90,7 @@ ramfs_mknod(struct user_namespace *mnt_userns, struct inode *dir,
 
 	if (inode) {
 		d_instantiate(dentry, inode);
-		// dget(dentry);	/* Extra count - pin the dentry in core */ // <<<
+		dget(dentry);	/* Extra count - pin the dentry in core */ // <<<
 		error = 0;
 		dir->i_mtime = dir->i_ctime = current_time(dir);
 	}
@@ -268,6 +268,7 @@ int ramfs_init_fs_context(struct fs_context *fc)
 static void ramfs_kill_sb(struct super_block *sb)
 {
 	kfree(sb->s_fs_info);
+	shrink_dcache_parent(sb->s_root);
 	shrink_dcache_sb(sb);
 	kill_litter_super(sb);
 }

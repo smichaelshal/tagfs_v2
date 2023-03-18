@@ -2,6 +2,11 @@
 
 #include <linux/slab.h>
 #include <linux/string.h>
+#include <linux/uaccess.h>
+
+
+
+
 
 char *_join_path_str(int count, ...) {
 	va_list	arg_ptr;
@@ -55,5 +60,54 @@ char *dup_name(const char *name){
     if(new_name)
         strcpy(new_name, name);
     return new_name;
+}
+
+char *get_tag_name(char *src){
+	char *end_item, *buff;
+	long len;
+
+	end_item = strchr(src, SPLITED_CHAR);
+	
+	if(!end_item)
+		end_item = src + strlen(src); // -1 ?
+
+	len = end_item - src  - strlen(PREFIX);
+	buff = kzalloc(len, GFP_KERNEL);
+	strncpy(buff, src + strlen(PREFIX), len);
+	return buff;
+}
+
+char *dup_name_user(const char __user *filename)
+{
+	char *kernel_filename;
+
+	kernel_filename = kmalloc(4096, GFP_KERNEL);
+	if (!kernel_filename)
+		return NULL;
+
+	if (strncpy_from_user(kernel_filename, filename, 4096) < 0) {
+		kfree(kernel_filename);
+		return NULL;
+	}
+
+	return kernel_filename;
+}
+
+char *long_to_string(long num){
+    char *buff;
+    buff = kzalloc(sizeof(10), GFP_KERNEL);
+    if(!buff)
+        return -ENOMEM;
+    sprintf(buff, "%ld", num);
+    return buff;
+}
+
+long string_to_long(char *buff, int base){
+    long nr;
+    int err;
+    err = kstrtol(buff, base, &nr);
+    if(IS_ERR(err))
+        return err;
+    return nr;
 }
 

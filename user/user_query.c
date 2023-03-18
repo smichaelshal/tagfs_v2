@@ -40,7 +40,7 @@ int add_tag(int fd, char *path, char *tag){
     memcpy(request->tag, tag, strlen(tag));
     request->fd = fd_file;
 
-    if (ioctl(fd, IOCTL_ADD_TAG, request) < 0) {
+    if (ioctl(fd, IOCTL_DELETE_TAG, request) < 0) { // IOCTL_ADD_TAG / IOCTL_DELETE_TAG
         perror("ioctl");
         exit(EXIT_FAILURE);
     }

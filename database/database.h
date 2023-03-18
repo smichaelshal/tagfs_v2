@@ -13,6 +13,8 @@
 
 #define DMAP_DIR_NAME "dmap0003"
 #define RMAP_DIR_NAME "rmap0003"
+#define BASE_NAME_BRANCH 10
+
 
 #define TAG_MAGIC 1234
 
@@ -49,6 +51,8 @@ struct db_tag {
 
     unsigned long flag;
     struct vtag *vtag;
+    
+    struct vfsmount *mnt;
 
     struct path path; // delete
 };
@@ -88,6 +92,11 @@ struct datafile {
     unsigned long ino;
     unsigned long ino_parent;
     struct super_block *sb;
+};
+
+struct db_file {
+    struct datafile *datafile;
+    char *branch_name;
 };
 
 
@@ -133,8 +142,8 @@ struct db_branch {
 #include "db_fs/db_fs.h" // ::: ???
 
 
-extern int taged_file(struct dentry *d_file, char *name);
-extern int untaged_file(struct dentry *d_file, char *name);
+extern int taged_file(struct dentry *d_file, char *name, struct vfsmount *mnt);
+extern int untaged_file(struct dentry *d_file, char *name, struct vfsmount *mnt);
 
 // extern struct tag *lookup_tag_test(char *name);
 // extern struct datafile *lookup_datafile(struct db_tag *tag, char *name);

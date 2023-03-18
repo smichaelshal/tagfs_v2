@@ -1,6 +1,8 @@
 export MODULE_NAME=vtagfs
 export MOUNT_PATH=/mnt/vtagfs
 
+
+
 lsmod | grep $MODULE_NAME
 
 mkdir -p $MOUNT_PATH
@@ -76,6 +78,8 @@ dmesg | tail -20 | less
 dmesg | tail -20 | less
 
 
+strace -o oo_1 ls -lai ::red52
+
 
 
 ./user/user_query /home/john/dir1/dir2/dir1/f1 red
@@ -124,8 +128,9 @@ echo 3 > /proc/sys/vm/drop_caches
 
 ls -lai /.tag_u13/red/contain_u13/home/contain_u13/john/contain_u13/tes1/this_u13/kk1
 
+make clean
 cd ..
-zip -r tagfs_err103.zip tagfs
+zip -r tagfs_err130.zip tagfs
 python3 -m http.server
 rm -rf tagfs_*.zip
 cd tagfs
@@ -269,3 +274,134 @@ echo 2 > /proc/sys/vm/drop_caches
 echo 3 > /proc/sys/vm/drop_caches
 
 cat /proc/kallsyms | grep -i "sys_openat"
+
+getfattr -d -m ".*" /red52/rmap0003/1/ain
+
+setfattr -n "security.<next>" -v "<value>" /red52/rmap0003/1
+
+echo "ain maim" > /home/john/ain
+
+
+setfattr -n "security.ino" -v "3145753" /red52/rmap0003/1/ain
+setfattr -n "security.ino_parent" -v "3151229" /red52/rmap0003/1/ain
+
+
+security.ino="2264357"
+security.ino_parent="2264269"
+
+--------------------------------
+
+export PS1='> '
+
+export MODULE_NAME=vtagfs
+export MOUNT_PATH=/mnt/vtagfs
+
+lsmod | grep $MODULE_NAME
+
+mkdir -p $MOUNT_PATH
+
+insmod $MODULE_NAME.ko
+mount -t $MODULE_NAME none $MOUNT_PATH
+
+./user/read_dir ::red52
+
+cat ::red52/test_tmp2
+
+cat ::red52/ain
+cat ::red52/bli
+
+echo 1 > /proc/sys/vm/drop_caches
+echo 2 > /proc/sys/vm/drop_caches
+echo 3 > /proc/sys/vm/drop_caches
+
+umount $MOUNT_PATH
+rmmod $MODULE_NAME
+
+mkdir -p /tmp/red52/dmap0003
+mkdir -p /tmp/red52/rmap0003/0
+
+touch /tmp/red52/dmap0003/test_tmp1
+
+
+
+setfattr -n "security.ino" -v "2752793" /tmp/red52/dmap0003/test_tmp1
+setfattr -n "security.ino_parent" -v "2752513" /tmp/red52/dmap0003/test_tmp1
+
+ln /tmp/red52/dmap0003/test_tmp1 /tmp/red52/rmap0003/0/test_tmp1
+
+
+echo "temp_file2" > /mnt/test_ext4_1/test_tmp2
+
+ls -lai /mnt/test_ext4_1/test_tmp2
+export INO_FILE=`ls -lai /mnt/test_ext4_1/test_tmp2 | grep -oP "(\d)* (d|-)" | grep -oP "\d*"`
+export INO_PARENT=`ls -laid /mnt/test_ext4_1 | grep -oP "(\d)* (d|-)" | grep -oP "\d*"`
+
+export MOUNT_PATH_ROOT=/mnt/test_ext4_1
+export TAG_NAME=red52
+export FILE_NAME=test_tmp2
+export FILE_PATH=/mnt/test_ext4_1/test_tmp2
+
+mkdir -p $MOUNT_PATH_ROOT/$TAG_NAME/dmap0003
+mkdir -p $MOUNT_PATH_ROOT/$TAG_NAME/rmap0003/0
+
+touch $MOUNT_PATH_ROOT/$TAG_NAME/dmap0003/$FILE_NAME
+
+setfattr -n "security.ino" -v $INO_FILE $MOUNT_PATH_ROOT/$TAG_NAME/dmap0003/$FILE_NAME
+setfattr -n "security.ino_parent" -v $INO_PARENT $MOUNT_PATH_ROOT/$TAG_NAME/dmap0003/$FILE_NAME
+
+ln $MOUNT_PATH_ROOT/$TAG_NAME/dmap0003/$FILE_NAME $MOUNT_PATH_ROOT/$TAG_NAME/rmap0003/0/$FILE_NAME
+
+getfattr -d -m ".*" $MOUNT_PATH_ROOT/$TAG_NAME/dmap0003/$FILE_NAME
+
+-----------
+
+mkdir /mnt/test_ext4_1
+dd if=/dev/zero of=~/file.img bs=1024k count=10
+LOOP_DEV=`losetup --find --show ~/file.img`
+
+
+mkfs -t ext4 $LOOP_DEV
+mount $LOOP_DEV /mnt/test_ext4_1
+
+# umount $LOOP_DEV
+# losetup --detach $LOOP_DEV
+
+
+-------------
+
+export PS1='> '
+
+export MODULE_NAME=vtagfs
+export MOUNT_PATH=/mnt/vtagfs
+
+lsmod | grep $MODULE_NAME
+
+mkdir -p $MOUNT_PATH
+
+insmod $MODULE_NAME.ko
+mount -t $MODULE_NAME none $MOUNT_PATH
+
+./user/read_dir ::red53
+cat ::red52/world3
+
+
+ls /red53/dmap0003/world12
+ls  /red53/rmap0003/3/world12
+getfattr -d -m ".*" /red53/rmap0003/3
+
+./user/user_query /home/john/world12 red53
+
+umount $MOUNT_PATH
+rmmod $MODULE_NAME
+
+
+ls /red53/dmap0003/world1
+
+
+./user/read_dir ::red53
+echo "rides3" > /home/john/world1
+
+./user/user_query /home/john/world10 red53
+./user/read_dir ::red53
+
+

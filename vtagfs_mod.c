@@ -15,22 +15,30 @@ extern void __exit vtag_dev_exit(void);
 char *root_tag_path = "/mnt/vtagfs";
 module_param(root_tag_path, charp, MOUNT_ARG_PERM);
 
-int vtagfs_init(void)
-{
+int vtagfs_init(void){
 	int err;
 	
 	err = register_filesystem(&vtag_fs_type);
-	if (err) {
+	if (err) 
 		return err;
-	}
 
-	vtag_dev_init();
-	start_hooks();
+	err = vtag_dev_init();
+	if(err)
+		goto out_err_dev;
+	err = start_hooks();
+	if(err)
+		goto out_err_hooks;
+
 	return 0;
+
+out_err_hooks:
+	vtag_dev_exit();
+out_err_dev:
+	unregister_filesystem(&vtag_fs_type);
+	return err;
 }
 
-static void vtagfs_exit(void)
-{
+static void vtagfs_exit(void){
 	close_hooks();
 	unregister_filesystem(&vtag_fs_type);
 	vtag_dev_exit();

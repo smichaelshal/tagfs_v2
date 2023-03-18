@@ -1,4 +1,6 @@
 #include <linux/cdev.h>
+#include <linux/path.h>
+
 
 #include "api.h"
 #include "../database/database.h"
@@ -11,7 +13,7 @@ static struct class *cl; // Global variable for the device class
 
 // struct database *db = NULL;
 
-int taged_file_by_fd(unsigned int fd, char *name);
+int tag_act_file_by_fd(unsigned int fd, char *name, unsigned int cmd);
 
 
 static int tagfs_dev_open(struct inode *i, struct file *f)
@@ -40,19 +42,23 @@ static long tagfs_dev_ioctl(struct file *file, unsigned int cmd, unsigned long a
     int ret = 0;
     // struct tag *tag;
     struct add_single_tag *request = kzalloc(sizeof(struct add_single_tag), GFP_KERNEL);
-    struct lookup_single_tag *request2 = kzalloc(sizeof(struct lookup_single_tag), GFP_KERNEL);
+    // struct lookup_single_tag *request2 = kzalloc(sizeof(struct lookup_single_tag), GFP_KERNEL);
     if(!request){
 		return -ENOMEM;
 	}
 
     // tag = kzalloc(sizeof(struct tag), GFP_KERNEL);
-
     switch (cmd) {
         case IOCTL_ADD_TAG:
             ret = copy_from_user(request, (char __user *)arg, sizeof(struct add_single_tag));
-            ret = taged_file_by_fd(request->fd, request->tag);
+            ret = tag_act_file_by_fd(request->fd, request->tag, cmd);
             break;
 
+        case IOCTL_DELETE_TAG:
+            ret = copy_from_user(request, (char __user *)arg, sizeof(struct add_single_tag));
+            ret = tag_act_file_by_fd(request->fd, request->tag, cmd);
+            break;
+    
 
         //  case IOCTL_LOOKUP_TAG: // testing, in the end this is run in the hook and not with ioctl
         //     ret = copy_from_user(request2, (char __user *)arg, sizeof(struct lookup_single_tag));
@@ -125,9 +131,9 @@ void __exit vtag_dev_exit(void) /* Destructor */
 // MODULE_AUTHOR("Anil Kumar Pugalia <email@sarika-pugs.com>");
 // MODULE_DESCRIPTION("Our First Character Driver");
 
-struct dentry *get_dentry_by_fd(unsigned int fd){
+struct path *get_path_by_fd(unsigned int fd){
     struct file *file;
-    struct dentry *dentry;
+    struct path *path;
     // struct vfsmount *mnt;
 
     if(!fd)
@@ -136,18 +142,32 @@ struct dentry *get_dentry_by_fd(unsigned int fd){
     file = fget(fd);
     if(!file)
         return NULL;
-
-    dentry = dget(file->f_path.dentry);
-    // mnt = file->f_path.mnt;
+    
+    path = &file->f_path;
+    path_get(path);
+    
     fput(file);
-    return dentry;
+    return path;
 }
 
-int taged_file_by_fd(unsigned int fd, char *name){
+int tag_act_file_by_fd(unsigned int fd, char *name, unsigned int cmd){
     struct dentry *dentry;
+    struct path *path;
     int err;
-    dentry = get_dentry_by_fd(fd);
-    err = taged_file(dentry, name);
-    dput(dentry);
+    
+    path = get_path_by_fd(fd);
+    if(!path)
+        return -ENOENT;
+
+    switch (cmd) {
+        case IOCTL_ADD_TAG:
+            err = taged_file(path->dentry, name, path->mnt);
+            break;
+        case IOCTL_DELETE_TAG:
+            err = untaged_file(path->dentry, name, path->mnt);
+            break;
+    }
+    
+    path_put(path);
     return err;
 }

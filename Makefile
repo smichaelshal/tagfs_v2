@@ -16,6 +16,7 @@ vtagfs-y += publisher/publisher.o
 vtagfs-y += api/device_api.o
 
 vtagfs-y += hooks/hooks.o
+vtagfs-y += hooks/list_hooks.o
 
 vtagfs-y += utils/utils.o
 

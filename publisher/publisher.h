@@ -33,5 +33,13 @@ extern struct vbranch *alloc_vbranch(void);
 extern struct dentry_list *alloc_dentry_list(void);
 extern struct db_tag *alloc_db_tag(void);
 extern struct datafile *alloc_datafile(void);
+extern struct db_file *alloc_db_file(void);
+
+extern void update_add_tag_cache(const char *name, struct vfsmount *mnt, struct db_file *db_file);
+extern struct file *open_file_dentry(struct dentry *dentry, struct vfsmount *mnt, umode_t mode);
+extern void free_datafile(struct datafile *datafile);
+
+void free_db_file(struct db_file *db_file);
+
 
 #endif /* VTAGFS_PUBLISHER_H_ */

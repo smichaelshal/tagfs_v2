@@ -13,19 +13,19 @@ struct inode *(*__ext4_iget)(struct super_block *sb, unsigned long ino,
 				ext4_iget_flags flags, const char *function,
 				unsigned int line) = NULL;
 
-unsigned long (*kallsyms_lookup_name)(const char *) = NULL;
+unsigned long (*my_kallsyms_lookup_name)(const char *) = NULL;
 
 
 struct inode *ext4_iget_wrapper(struct super_block *sb, unsigned long ino){
 	
-	if(!kallsyms_lookup_name)
-		kallsyms_lookup_name = lookup_name("kallsyms_lookup_name");
+	if(!my_kallsyms_lookup_name)
+		my_kallsyms_lookup_name = lookup_name("kallsyms_lookup_name");
 
-	if(!kallsyms_lookup_name)
+	if(!my_kallsyms_lookup_name)
 		return NULL;
 
 	if(!__ext4_iget)
-		__ext4_iget = kallsyms_lookup_name("__ext4_iget");
+		__ext4_iget = my_kallsyms_lookup_name("__ext4_iget");
 
 	if(!__ext4_iget)
 		return NULL;
@@ -33,16 +33,25 @@ struct inode *ext4_iget_wrapper(struct super_block *sb, unsigned long ino){
 	return __ext4_iget(sb, ino, EXT4_IGET_NORMAL,  __func__, __LINE__);
 }
 
+struct inode *tmpfs_iget_wrapper(struct super_block *sb, unsigned long ino){
+	return iget_locked(sb, ino);
+}
+
 struct inode *iget_generic(struct super_block *sb, unsigned long ino){
 	struct inode *inode;
 	
 	switch (sb->s_magic) {
 		case EXT4_SUPER_MAGIC:
+			pr_info("sb is ext4\n");
 			inode = ext4_iget_wrapper(sb, ino);
 			break;
+		
+		// case TMPFS_MAGIC | RAMFS_MAGIC:
+		// 	pr_info("sb is tmpfs\n");
+		// 	inode = tmpfs_iget_wrapper(sb, ino);
+		// 	break;
 	}
 
 	return inode;
-	// if(sb->s_magic == EXT4_SUPER_MAGIC)
 
 }

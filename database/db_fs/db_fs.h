@@ -19,4 +19,6 @@ extern int db_remove_file_dmap(struct datafile *df, struct dentry *d_dmap);
 extern int init_rmap(struct dentry *dir);
 extern int db_read_datafile(struct dentry *dentry, struct datafile *df);
 
+extern int db_remove_file_rmap(struct datafile *df, struct dentry *d_rmap, struct vfsmount *mnt);
+
 #endif /* DB_FS_H_ */
